@@ -65,4 +65,4 @@ To refresh signals, just re-run the last two cells.
 
 ## Disclaimer
 
-This is a student project for educational purposes only. Not financial advice. Always do your own research before making any investment decisions.
+This is a random project for educational purposes only. Not financial advice. Always do your own research before making any investment decisions.
