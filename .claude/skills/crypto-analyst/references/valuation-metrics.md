@@ -50,4 +50,13 @@ python scripts/valuation_calc.py candidates.csv            # markdown table
 python scripts/valuation_calc.py candidates.csv --json     # machine-readable
 ```
 
-It computes float, annualized revenue, MC/revenue, FDV/revenue, MC/fees, MC/TVL, MC per user, earnings, revenue growth and unlock overhang. It also computes each asset's MC/revenue premium or discount against the median of its sector peers, and raises screening flags (LOW_FLOAT, UNLOCK_OVERHANG, SUBSIDIZED, REV_DECLINING, NO_REVENUE_DATA). Blank inputs stay blank and are never filled with zero, so any ratio that depends on missing data shows as `n/a`. The flags are heuristics that prompt a closer look, not verdicts. Decide which ratios actually apply using the table above.
+It computes float, annualized revenue, MC/revenue, FDV/revenue, MC/fees, MC/TVL, MC per user, earnings, revenue growth, unlock overhang, **holder yield** (annualized holder revenue ÷ MC) and **buyback cover** (annualized holder revenue ÷ 12-month unlocks). It also computes each asset's MC/revenue premium or discount against the median of its sector peers, and raises screening flags (LOW_FLOAT, UNLOCK_OVERHANG, SUBSIDIZED, REV_DECLINING, NO_REVENUE_DATA, UNLOCK_CAP_6M, DILUTION_OUTRUNS_BUYBACKS). Blank inputs stay blank and are never filled with zero, so any ratio that depends on missing data shows as `n/a`. The flags are heuristics that prompt a closer look, not verdicts. `UNLOCK_CAP_6M` is the exception: it marks the condition for the Research Score cap of 6. Decide which ratios actually apply using the table above.
+
+Buyback cover below 1x means the supply arriving over the next year is worth more than everything holders receive in that year. A token with an impressive buyback can still be diluting its holders, so put buyback cover beside every buyback claim. Count protocol emissions (staking rewards, liquidity mining) as unlocks for this purpose.
+
+Two companion scripts use the same input conventions:
+
+```bash
+python scripts/research_score.py scores.csv        # weighted Research Score, caps and full breakdown
+python scripts/call_scorecard.py calls.csv         # follow-up: returns since an earlier report vs BTC, by group
+```

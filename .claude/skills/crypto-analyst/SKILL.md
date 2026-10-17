@@ -1,6 +1,6 @@
 ---
 name: crypto-analyst
-description: Evidence-first crypto research analyst that hunts for mispriced tokens using fundamentals, on-chain data, tokenomics, market structure and venture-style due diligence, then actively tries to disprove its own thesis. Use this skill whenever the user wants undervalued, asymmetric or overlooked crypto or altcoin opportunities, asks what to research or accumulate in crypto right now, wants a crypto market regime or sector-rotation read, or asks for due diligence, a deep dive, a bull/bear case, tokenomics or unlock analysis, or valuation work (FDV, MC/revenue, MC/TVL, fees) on any token or protocol, even if they never say "research" or "analyst". Not for placing trades or for pure technical-indicator signal checks.
+description: Evidence-first crypto research analyst that hunts for mispriced tokens using fundamentals, on-chain data, tokenomics, market structure and venture-style due diligence, then actively tries to disprove its own thesis. Use this skill whenever the user wants undervalued, asymmetric or overlooked crypto or altcoin opportunities, asks what to research or accumulate in crypto right now, wants a crypto market regime or sector-rotation read, or asks for due diligence, a deep dive, a bull/bear case, tokenomics or unlock analysis, or valuation work (FDV, MC/revenue, MC/TVL, fees) on any token or protocol, or asks to update, re-check or grade an earlier crypto scan, even if they never say "research" or "analyst". Not for placing trades or for pure technical-indicator signal checks.
 ---
 
 # Crypto Analyst
@@ -16,6 +16,7 @@ In crypto research, the edge comes from discipline, not optimism. Most of what c
 | "What's mispriced?", "Where are the asymmetric opportunities?", "What should I be researching?" | **Market scan** | Run the full workflow below and present 5–10 finalists |
 | "Analyze X", "Is X undervalued?", "X vs Y?" | **Due diligence** | Give brief regime context (a short Step 1), then run Steps 4–8 on the named assets. Keep the competitors, the bear case and the self-challenge |
 | A narrow factual question ("When is the next big ARB unlock?") | **Quick answer** | Answer directly with a sourced, dated figure. Skip the pipeline |
+| "Update the scan", "How did your picks do?", "Make this better" after an earlier report | **Follow-up** | Re-check the earlier calls first (see "Follow-up mode" below), then refresh Steps 1 and 4–8 for the finalists and near-misses |
 
 ## Ground rules for data
 
@@ -25,6 +26,9 @@ Prices, supplies, revenue and unlock schedules change every day, and your traini
 - If you have no browsing or data tools, say so up front. Label any figure you use as "last known, as of <date>" and keep the analysis qualitative instead of inventing precision.
 - Use whatever tools you have: web search and fetch, connected market-data or exchange tools, block explorers and dashboards. `references/data-sources.md` lists where to find each metric and how far to trust each kind of source.
 - Social-media volume, sentiment scores and influencer mentions measure *attention*, not value. They can help answer "is this trade crowded?", but they never count as evidence of fundamental value.
+- **Thin venues need a second source.** An exchange quote with little volume (say under ~$100k a day, or no trades for a day) can be stale. Cross-check it against another source before using it, and flag any price that has only one.
+- **Blocked sources:** if a site is blocked from your environment, say which and use the next source in `references/data-sources.md`. Never route around a network policy, and label figures you could only get secondhand.
+- **The user's own context.** When the user points you at their inbox, notes, a signal system or their portfolio, mine it: their positions, written exit levels, research notes and positioning trackers are leads that sharpen the scan. Verify each lead against a public source before it moves a score. Keep their holdings, sizes and exit levels out of anything shareable unless they ask; give those in the conversation instead.
 
 The full evidence rules are at the end of this file. Read them before writing, because they apply to every section.
 
@@ -81,7 +85,9 @@ Two questions matter more than any single metric:
 1. **Is the growth organic?** Strip out incentives, airdrop farming, wash trading and TVL that leaves when yields drop. Check retention, and check what happened when rewards stopped.
 2. **Does value reach the token?** A protocol can thrive while its token captures nothing. Trace the actual path from protocol revenue to token holders, whether through a fee share, buybacks, burns, or demand for the token as collateral or gas. Check whether that path is live or only proposed.
 
-For valuation, compare each asset with its closest competitors on metrics that fit its business model. `references/valuation-metrics.md` explains which ratios make economic sense for DEXs, lending, perps, L1s, L2s, liquid staking and restaking, RWA, DePIN, oracles and other types, and which ones mislead. Use `scripts/valuation_calc.py` to compute the ratios and sector-median comparisons the same way every time (run it with `--help` for usage). Look specifically for divergence: fundamentals improving while the price or the valuation multiple shrinks.
+For valuation, compare each asset with its closest competitors on metrics that fit its business model. `references/valuation-metrics.md` explains which ratios make economic sense for DEXs, lending, perps, L1s, L2s, liquid staking and restaking, RWA, DePIN, oracles and other types, and which ones mislead. Use `scripts/valuation_calc.py` to compute the ratios and sector-median comparisons the same way every time (run it with `--help` for usage). Give it `holder_revenue_30d` and the 6- and 12-month unlocks wherever you can: holder yield and buyback cover show whether buybacks actually outrun dilution, and its `UNLOCK_CAP_6M` flag tells you when the unlock cap applies. Look specifically for divergence: fundamentals improving while the price or the valuation multiple shrinks.
+
+Before you score anything, run a **recency check** on each survivor covering the last 90 days. Search its governance forum and recent news for votes that changed buybacks, emissions, fee switches or reserves; for analyst initiations; and for denials of reported deals. A rumored catalyst that a founder publicly refuted is not a catalyst. Also keep each revenue figure on one definition across reports. If last time you used trailing twelve months and this time you use the protocol's own run-rate, say so, because a change of basis can move a multiple more than the business did.
 
 ### Step 5 — Catalysts and competition
 
@@ -113,6 +119,8 @@ For each finalist, write **thesis invalidation conditions**: specific triggers a
 
 Give each finalist a Research Score from 1 to 10 using the rubric in `references/report-template.md`. It covers organic traction, value accrual, relative valuation, catalysts, competitive position, evidence quality, and caps for severe risks. The score measures how strong and well-supported the asymmetric case is. It is not a price target or a buy signal. Rank the finalists by score.
 
+Put the six ratings for every finalist in a CSV and run `scripts/research_score.py`, which applies the weights and caps the same way every time and prints the full breakdown. Show that breakdown for every finalist, not just the top one, so a later follow-up can say exactly what moved. Apply a cap whenever its condition holds, even when you suspect the risk is overstated: say why in the note, and don't skip the cap.
+
 ### Step 8 — Challenge your own conclusions
 
 Before writing the final answer, go back through the finalists and ask:
@@ -127,6 +135,17 @@ Before writing the final answer, go back through the finalists and ask:
 
 Revise scores or cut names if the answers call for it. Your honest answers become the closing section of the report.
 
+## Follow-up mode
+
+When the user comes back to an earlier scan, grade it before you extend it. A follow-up that only adds new names hides whether the method works.
+
+1. **Re-price every name from the last report** (finalists, watchlist and eliminated) at the same venue, with a second source for thin ones. Use the prices quoted in the earlier report as the base.
+2. **Score the calls.** Put the names in a CSV and run `scripts/call_scorecard.py`. It reports each name's return against BTC and each group as an equal-weight basket. Say how many days the window covers. A few weeks of returns is noise, so treat it as a check on direction, not as proof.
+3. **Walk each invalidation condition and catalyst.** Did any trigger? Did a dated catalyst happen, and did the price respond?
+4. **Diff the evidence.** Sort what you find into *new*, *gap closed*, *still open*, *contradicts* (credible evidence against the thesis) and *correction* (something you missed or got wrong last time, including anything public before the earlier report). Corrections matter most: they show where the process leaks.
+5. **Rescore with the full breakdown** and show the change from the earlier score with the reason. Apply caps you should have applied last time, and say so.
+6. **Report** a call scorecard and a "Changes since last report" section before the finalist sections (see `references/report-template.md`).
+
 ## Output
 
 Follow the full template in `references/report-template.md`. The sections, in order:
@@ -140,6 +159,8 @@ Follow the full template in `references/report-template.md`. The sections, in or
 Close with the data timestamp and a one-line note that this is research, not financial advice.
 
 In due-diligence mode, use the same per-finalist structure for each named asset with a shorter market overview. Say plainly whether each asset would have survived the elimination screen, and still end with "WHAT COULD I BE WRONG ABOUT?".
+
+In follow-up mode, put the call scorecard and "Changes since last report" between the market overview and the comparison table. When the user has shared their own positions, add a short "Your book against this scan" note in the conversation, not in a shareable page: where the scan agrees or disagrees with each holding, and how far each holding sits from any exit level they wrote down.
 
 ## Evidence rules
 

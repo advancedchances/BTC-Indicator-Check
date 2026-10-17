@@ -19,9 +19,12 @@ is required; fill in whatever you have.
   revenue_30d        USD, revenue kept by protocol / token holders over the last 30 days
   revenue_30d_prior  USD, the same measure for the previous 30-day window
   incentives_30d     USD value of token incentives paid over the last 30 days
+  holder_revenue_30d USD actually reaching token holders over the last 30 days
+                     (buybacks, burns, distributions to stakers/lockers)
   tvl                USD
   active_users_30d   Monthly active users / addresses
-  unlocks_12m_usd    USD value of tokens unlocking in the next 12 months
+  unlocks_6m_usd     USD value of tokens unlocking or emitted in the next 6 months
+  unlocks_12m_usd    USD value of tokens unlocking or emitted in the next 12 months
 
 Numbers may be written as 1234567, $1.2M, 850k, 3.4B or 1.1T. In a CSV,
 quote any number containing commas ("1,234,567").
@@ -42,7 +45,7 @@ import sys
 FIELDS = [
     "asset", "ticker", "sector", "price", "market_cap", "fdv",
     "fees_30d", "revenue_30d", "revenue_30d_prior", "incentives_30d",
-    "tvl", "active_users_30d", "unlocks_12m_usd",
+    "holder_revenue_30d", "tvl", "active_users_30d", "unlocks_6m_usd", "unlocks_12m_usd",
 ]
 NUMERIC = FIELDS[3:]
 
@@ -50,6 +53,8 @@ NUMERIC = FIELDS[3:]
 LOW_FLOAT_BELOW = 0.30         # market cap / FDV
 UNLOCK_OVERHANG_AT = 0.10      # 12-month unlocks / market cap
 REV_DECLINE_BELOW = -0.20      # 30d revenue vs. prior 30d
+UNLOCK_CAP_6M_AT = 0.25        # 6-month unlocks / market cap; triggers the Research Score cap of 6
+BUYBACK_COVER_BELOW = 1.0      # annual holder revenue / 12-month unlocks
 
 SUFFIXES = {"k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12}
 
@@ -111,6 +116,8 @@ def compute(row):
     rev, prior = row["revenue_30d"], row["revenue_30d_prior"]
     ann_rev = rev * 365 / 30 if rev is not None else None
     ann_fees = row["fees_30d"] * 365 / 30 if row["fees_30d"] is not None else None
+    hold = row["holder_revenue_30d"]
+    ann_hold = hold * 365 / 30 if hold is not None else None
     earnings = rev - row["incentives_30d"] if rev is not None and row["incentives_30d"] is not None else None
 
     m = {
@@ -124,6 +131,9 @@ def compute(row):
         "earnings_30d": earnings,
         "rev_growth": div(rev, prior) - 1 if div(rev, prior) is not None else None,
         "unlock_overhang": div(row["unlocks_12m_usd"], mc),
+        "unlock_6m_share": div(row["unlocks_6m_usd"], mc),
+        "holder_yield": div(ann_hold, mc),
+        "buyback_cover": div(ann_hold, row["unlocks_12m_usd"]),
     }
 
     flags = []
@@ -137,6 +147,10 @@ def compute(row):
         flags.append("REV_DECLINING")
     if rev is None and row["fees_30d"] is None:
         flags.append("NO_REVENUE_DATA")
+    if m["unlock_6m_share"] is not None and m["unlock_6m_share"] >= UNLOCK_CAP_6M_AT:
+        flags.append("UNLOCK_CAP_6M")
+    if m["buyback_cover"] is not None and m["buyback_cover"] < BUYBACK_COVER_BELOW:
+        flags.append("DILUTION_OUTRUNS_BUYBACKS")
     m["flags"] = flags
     return m
 
@@ -166,7 +180,9 @@ def fmt_usd(x):
 
 
 def fmt_x(x):
-    return "n/a" if x is None else f"{x:,.1f}x"
+    if x is None:
+        return "n/a"
+    return f"{x:,.2f}x" if abs(x) < 1 else f"{x:,.1f}x"
 
 
 def fmt_pct(x, signed=False):
@@ -178,7 +194,8 @@ def fmt_pct(x, signed=False):
 def to_markdown(rows):
     headers = ["Asset", "Sector", "Mkt Cap", "FDV", "Float", "Ann. Rev", "MC/Rev",
                "FDV/Rev", "MC/Fees", "MC/TVL", "MC/User", "Earnings 30d",
-               "Rev Growth", "Unlock 12m", "MC/Rev vs Peers", "Flags"]
+               "Rev Growth", "Holder Yield", "Unlock 12m", "Buyback Cover",
+               "MC/Rev vs Peers", "Flags"]
     lines = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
     for r in rows:
         m = r["metrics"]
@@ -188,7 +205,8 @@ def to_markdown(rows):
                  fmt_pct(m["float"]), fmt_usd(m["ann_revenue"]), fmt_x(m["mc_rev"]),
                  fmt_x(m["fdv_rev"]), fmt_x(m["mc_fees"]), fmt_x(m["mc_tvl"]),
                  fmt_usd(m["mc_per_user"]), fmt_usd(m["earnings_30d"]),
-                 fmt_pct(m["rev_growth"], True), fmt_pct(m["unlock_overhang"]), vs,
+                 fmt_pct(m["rev_growth"], True), fmt_pct(m["holder_yield"]),
+                 fmt_pct(m["unlock_overhang"]), fmt_x(m["buyback_cover"]), vs,
                  ", ".join(m["flags"]) or "-"]
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
@@ -196,7 +214,11 @@ def to_markdown(rows):
                  "in the same sector; with n<3 treat it as weak. Flags are screening heuristics: "
                  f"LOW_FLOAT (<{LOW_FLOAT_BELOW:.0%} of FDV circulating), UNLOCK_OVERHANG "
                  f"(>={UNLOCK_OVERHANG_AT:.0%} of MC unlocking in 12m), SUBSIDIZED (incentives > revenue), "
-                 f"REV_DECLINING (<{REV_DECLINE_BELOW:.0%} vs prior 30d), NO_REVENUE_DATA.")
+                 f"REV_DECLINING (<{REV_DECLINE_BELOW:.0%} vs prior 30d), NO_REVENUE_DATA, "
+                 f"UNLOCK_CAP_6M (>={UNLOCK_CAP_6M_AT:.0%} of MC unlocking in 6m: Research Score cap of 6 "
+                 f"unless absorption is credible), DILUTION_OUTRUNS_BUYBACKS (annual holder revenue "
+                 f"< 12m unlocks). Holder Yield = annualized holder revenue / MC; Buyback Cover = "
+                 f"annualized holder revenue / 12m unlocks.")
     return "\n".join(lines)
 
 

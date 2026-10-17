@@ -21,6 +21,26 @@ Use this structure for market scans. For due-diligence requests on named assets,
 - **Crowded trades:** <sectors or assets, and why>
 - **Overlooked sectors:** <sectors, and the evidence fundamentals are improving>
 
+<!-- Follow-up mode only: the next two sections. Leave them out of a first scan. -->
+
+## Call scorecard (since <earlier report date>, <N> days)
+
+| Group | Names | Equal-weight return | vs BTC | Beat BTC | Best | Worst |
+|---|---|---|---|---|---|---|
+| Finalists | | | | | | |
+| Watchlist | | | | | | |
+| Eliminated | | | | | | |
+
+<Per-name table from scripts/call_scorecard.py. Flag thin-venue prices. One sentence on what drove the gap, and a reminder that the window is short.>
+
+## Changes since last report
+
+| Asset | Status | Finding | Source, date |
+|---|---|---|---|
+| <name> | New / Gap closed / Still open / Contradicts / Correction | <one or two sentences> | <link>, <date> |
+
+<List every correction, including anything that was public before the earlier report and was missed.>
+
 ## 2. Finalists at a glance
 
 | Asset | Ticker | Price | Market Cap | FDV | Sector | Core Thesis | Key Catalyst | Biggest Risk | Key Metric | Research Score |
@@ -86,7 +106,16 @@ Ranked by Research Score. <N> candidates screened → <M> deep-dived → <K> fin
 
 **Key metrics to monitor.** <metric: current value → level that matters>
 
-**Research Score breakdown.** Traction <n> · Value accrual <n> · Valuation <n> · Catalysts <n> · Moat <n> · Evidence <n> → <weighted>/10 <(capped: reason)>
+**Research Score breakdown.** Traction <n> · Value accrual <n> · Valuation <n> · Catalysts <n> · Moat <n> · Evidence <n> → <weighted>/10 <(capped: reason)> <(follow-up: change from <old score> and why)>
+
+**Data provenance.**
+
+| Figure | Value | Source | As of | Cross-checked? |
+|---|---|---|---|---|
+| Price / market cap | | <venue> | <UTC time> | <second source, or "single source"> |
+| Revenue (30d) | | <source, definition> | | |
+| Holder revenue / buybacks | | | | |
+| Unlocks (6m / 12m) | | | | |
 
 **Sources.** 
 - <title>, <URL>, accessed <date>
@@ -111,7 +140,7 @@ Ranked by Research Score. <N> candidates screened → <M> deep-dived → <K> fin
 
 ## Research Score rubric (1–10)
 
-Score each dimension from 1 to 10, take the weighted average, then apply any caps. Show the breakdown in each finalist section so the user can reweight it if they disagree.
+Score each dimension from 1 to 10, take the weighted average, then apply any caps. Show the breakdown in each finalist section so the user can reweight it if they disagree. Compute it with `scripts/research_score.py` (cap codes: `EXPLOIT_OR_ENFORCEMENT`, `UNLOCK_6M`, `MULTISIG_NO_TIMELOCK`, `UNVERIFIABLE_METRIC`) and keep the CSV, so a follow-up can show what changed.
 
 | Dimension | Weight | 9–10 looks like | 1–3 looks like |
 |---|---|---|---|
@@ -124,7 +153,7 @@ Score each dimension from 1 to 10, take the weighted average, then apply any cap
 
 **Caps** (apply the lowest one that applies):
 - Active regulatory enforcement against the project, or an unresolved exploit or solvency issue → max 5
-- More than 25% of circulating supply unlocking within 6 months with no credible absorption → max 6
+- More than 25% of circulating supply unlocking within 6 months with no credible absorption → max 6 (`valuation_calc.py` flags this as `UNLOCK_CAP_6M`; "credible absorption" means buyback cover near 1x or locked staking of the unlocked supply, not a hope that insiders won't sell)
 - Critical contracts upgradeable by a small multisig with no timelock → max 7
 - Key thesis metric not independently verifiable → max 7
 

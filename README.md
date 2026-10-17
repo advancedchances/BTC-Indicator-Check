@@ -84,6 +84,15 @@ python .claude/skills/crypto-analyst/scripts/valuation_calc.py --template > cand
 python .claude/skills/crypto-analyst/scripts/valuation_calc.py candidates.csv
 ```
 
+Besides valuation multiples, the calculator reports holder yield (what buybacks and fee shares pay holders each year) and buyback cover (that payout against the next year's unlocks), and flags when unlocks trigger the score cap. Two companion scripts keep scoring and follow-ups consistent:
+
+```bash
+python .claude/skills/crypto-analyst/scripts/research_score.py scores.csv   # Research Score with full breakdown and caps
+python .claude/skills/crypto-analyst/scripts/call_scorecard.py calls.csv    # how earlier calls did against BTC, by group
+```
+
+Ask *"update the scan"* or *"how did your picks do?"* after a report and the skill runs in follow-up mode: it re-prices the earlier calls, scores them against BTC, sorts new evidence into new / closed / open / contradicting / corrections, and rescores with the full breakdown.
+
 ## Disclaimer
 
 This is a random project for educational purposes only. Not financial advice. Always do your own research before making any investment decisions.
