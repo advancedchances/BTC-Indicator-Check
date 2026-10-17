@@ -54,6 +54,8 @@ It computes float, annualized revenue, MC/revenue, FDV/revenue, MC/fees, MC/TVL,
 
 Buyback cover below 1x means the supply arriving over the next year is worth more than everything holders receive in that year. A token with an impressive buyback can still be diluting its holders, so put buyback cover beside every buyback claim. Count protocol emissions (staking rewards, liquidity mining) as unlocks for this purpose.
 
+To fill the inputs, `python scripts/market_data.py revenue <defillama-slugs>` gives 30-day fees, revenue and holders revenue (with the prior 30 days and the same window a year earlier), `market_data.py mcaps <coingecko-ids>` gives market caps, and `market_data.py prices <symbols>` gives Coinbase prices. Use one source per measure across all names.
+
 Two companion scripts use the same input conventions:
 
 ```bash

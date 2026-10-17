@@ -68,13 +68,34 @@ A project's own claims (a blog or a tweet) are primary for *what the project say
 **Retail attention (Tier 4)**
 - App-store rankings of major exchange apps, Google Trends, social mindshare tools. Use these to judge whether a trade is crowded or overlooked, never to judge value.
 
-## When a source is blocked or thin
+## Free endpoints, and checking them each session
 
-Network policies, rate limits and paid tiers mean some sources won't be reachable in a given session. Say which ones failed, never route around a block, and fall back in this order:
+Which sources a session can reach changes with its network policy, with rate limits on shared addresses and with site rules. Start every session with:
 
-1. **Prices:** a connected exchange or market-data tool. Check 24h volume first. On a thin venue (under ~$100k a day, or no trades for a day), confirm the price elsewhere before using it.
-2. **Second price source and on-chain supply:** a block explorer's token page. Blockscout token pages, for example, show a CoinGecko-sourced price and market cap alongside the contract's on-chain total supply. Free explorer tiers can allow only a few calls per session, so spend them on the thin-venue names and the supply figures a thesis rests on.
-3. **Revenue, unlocks, governance:** web search, preferring results that quote the primary source (the protocol's own report, forum post or docs). A search summary of an aggregator is secondhand: label it that way and don't let a single secondhand figure carry a score.
+```bash
+python scripts/market_data.py check
+```
+
+It tests each endpoint below and reports one of: `ok`; `blocked by network policy` (the session's proxy refused the host, so don't retry or route around it, and say which host); `refused by site` (often a missing User-Agent or API key; the script always sends a User-Agent, because Coinbase's Cloudflare front end rejects Python's default one); `rate-limited`; `geo-blocked`; `timeout`. Never assume that a block or rate limit noted in an earlier session or report still holds.
+
+| Endpoint | Gives you | Key needed | `market_data.py` command |
+|---|---|---|---|
+| Coinbase Exchange public API (`api.exchange.coinbase.com`) | Spot price, 24h volume, candles back for years | No | `prices`, `candles` |
+| DefiLlama fees API (`api.llama.fi/summary/fees/<slug>`) | Daily fees, revenue and holders revenue per protocol | No | `revenue` |
+| DefiLlama coins API (`coins.llama.fi/mcaps`) | CoinGecko market caps, without CoinGecko's rate limit | No | `mcaps` |
+| DefiLlama stablecoins (`stablecoins.llama.fi`) | Total and per-chain stablecoin supply | No | (checked only) |
+| Kraken public API | A second spot price | No | (checked only) |
+| CoinGecko free API | Market cap, FDV, supply | No, but heavily rate-limited | (checked only) |
+| Hyperliquid info API (`api.hyperliquid.xyz/info`, POST) | Perp prices, funding, open interest | No | (checked only) |
+| Blockscout REST API (`<chain>.blockscout.com/api/v2/tokens/<address>`) | On-chain total supply, holder counts, CoinGecko-sourced price | No | (checked only) |
+| mempool.space | BTC fee market | No | (checked only) |
+
+When something fails, say which source failed and fall back in this order:
+
+1. **Prices:** Coinbase, then a connected exchange or market-data tool. Check 24h volume first. On a thin venue (under ~$100k a day, or no trades for a day), confirm the price elsewhere before using it.
+2. **Second price source and on-chain supply:** a block explorer's token page or REST API. Blockscout shows a CoinGecko-sourced price and market cap alongside the contract's on-chain total supply. Its MCP server's free tier allows only a few calls per session, so prefer the REST API when the check shows it reachable.
+3. **Revenue:** DefiLlama, for every protocol it covers, so all names share one definition. Fall back to the protocol's own reports, then web search that quotes a primary source. A search summary of an aggregator is secondhand: label it that way, and don't let a single secondhand figure carry a score.
+4. **Unlocks and governance:** the project's docs, its vesting contracts and governance forum, then Tokenomist or DefiLlama unlock pages, then search.
 
 ## The user's own sources
 

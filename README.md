@@ -91,6 +91,15 @@ python .claude/skills/crypto-analyst/scripts/research_score.py scores.csv   # Re
 python .claude/skills/crypto-analyst/scripts/call_scorecard.py calls.csv    # how earlier calls did against BTC, by group
 ```
 
+`scripts/market_data.py` gathers the inputs without API keys and checks, at the start of each session, which data sources the session can reach:
+
+```bash
+python .claude/skills/crypto-analyst/scripts/market_data.py check                    # which sources are reachable right now
+python .claude/skills/crypto-analyst/scripts/market_data.py prices BTC ETH SKY       # Coinbase spot prices and 24h volume
+python .claude/skills/crypto-analyst/scripts/market_data.py revenue aave sky         # DefiLlama fees, revenue, holders revenue
+python .claude/skills/crypto-analyst/scripts/market_data.py mcaps aave sky           # CoinGecko market caps via DefiLlama
+```
+
 Ask *"update the scan"* or *"how did your picks do?"* after a report and the skill runs in follow-up mode: it re-prices the earlier calls, scores them against BTC, sorts new evidence into new / closed / open / contradicting / corrections, and rescores with the full breakdown.
 
 ## Disclaimer
