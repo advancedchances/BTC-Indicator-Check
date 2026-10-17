@@ -48,6 +48,8 @@ This is where many theses fall apart. Answer concretely:
   - Burn from usage (e.g. EIP-1559-style base-fee burns)
   - None: governance only
 - Is the mechanism **live**, **approved but not live**, or only **proposed**? A fee switch that hasn't been turned on is a catalyst, not current value capture.
+- What changed in the last 90 days? Read the governance forum and recent votes: buyback or emission changes, reserve targets, fee switches. Value-accrual settings move often, and a report that misses one recent vote can describe the wrong token.
+- How much reaches holders compared with what dilutes them? Put annualized holder revenue beside next-year unlocks and emissions (buyback cover in `scripts/valuation_calc.py`).
 - Structural leakage: does a labs company or foundation with equity holders capture the economics instead of the token (front-end fees, off-chain revenue, sequencer profit)?
 - Any legal or regulatory reason the value-accrual mechanism might be switched off or blocked?
 
@@ -95,6 +97,7 @@ Use these where reliable data exists. Note the data provider and whether address
 - Staking flows: net staking vs. unstaking, and the length of the unbonding queue
 - Stablecoin flows into the ecosystem
 - Network fees and blockspace demand
+- Derivatives positioning by large accounts (for example, whale long/short on perp venues). Heavy one-sided shorts are squeeze fuel and heavy longs are liquidation fuel. Either is crowding, not value.
 
 **Look for divergence**: fundamentals and on-chain activity trending up while the price or the valuation multiple trends down is the core of a mispricing thesis. The reverse (price up while usage is flat or down) is a warning.
 
@@ -122,3 +125,4 @@ Answer these in writing for each candidate before moving on:
 3. How much supply overhang is there over the next 12 months relative to demand?
 4. What is the cleanest metric showing a gap between price and fundamentals?
 5. What single data point, if it changed, would break the thesis?
+6. Has any reported catalyst been denied, or has any recent vote or analyst initiation changed the picture?
