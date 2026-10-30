@@ -224,20 +224,69 @@ def _kraken(symbol, interval, days):
     return _series([(r[0], r[1], r[2], r[3], r[4], r[6]) for r in rows])
 
 
+def _yahoo(symbol, interval, days):
+    """Stocks, ETFs and indexes from Yahoo Finance's chart API. Daily bars are stamped at 00:00 UTC of the
+    exchange's trading date, and `forming_last` says whether that session is still open."""
+    sym = ALIASES.get(symbol, {}).get("yahoo", symbol)
+    end = int(time.time())
+    start = end - min(days, 729 if interval == "1h" else days) * 86400
+    # Explicit period1/period2: `range=max` silently switches to monthly bars.
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?period1={start}&period2={end}"
+           f"&interval={interval}&includePrePost=false")
+    data = None
+    for k in range(3):  # Yahoo rate-limits bursts
+        try:
+            data = fetch(url)
+            break
+        except FetchError as e:
+            if e.kind != "rate-limited" or k == 2:
+                raise
+            time.sleep(1.5 * (k + 1))
+    res = (data.get("chart") or {}).get("result") or []
+    if not res or not res[0].get("timestamp"):
+        raise FetchError("not listed", "no chart data for this symbol")
+    res = res[0]
+    if res["meta"].get("dataGranularity") not in (None, interval):
+        raise FetchError("site error", f"Yahoo returned {res['meta'].get('dataGranularity')} bars, not {interval}")
+    off = res["meta"].get("gmtoffset") or 0
+    q = res["indicators"]["quote"][0]
+    rows = []
+    for t, o, h, l, c, v in zip(res["timestamp"], q["open"], q["high"], q["low"], q["close"], q["volume"]):
+        if None in (o, h, l, c):
+            continue
+        if interval == "1d":
+            local = t + off
+            t = local - local % 86400
+        rows.append((t, o, h, l, c, v or 0))
+    s = _series(rows)
+    if interval == "1d" and s["t"]:
+        end = ((res["meta"].get("currentTradingPeriod") or {}).get("regular") or {}).get("end")
+        session_day = (end + off) - (end + off) % 86400 if end else None
+        s["forming_last"] = bool(end and time.time() < end and session_day == s["t"][-1])
+    return s
+
+
 CANDLE_SOURCES = (("Coinbase Exchange", _coinbase), ("Binance spot (USDT)", _binance),
-                  ("Hyperliquid perp", _hyperliquid), ("Kraken", _kraken))
+                  ("Hyperliquid perp", _hyperliquid), ("Kraken", _kraken), ("Yahoo Finance", _yahoo))
+CRYPTO_SOURCES = tuple(n for n, _ in CANDLE_SOURCES if n != "Yahoo Finance")
 
 
-def load_candles(symbol, interval="1d", days=1500, sources=None):
+def load_candles(symbol, interval="1d", days=1500, sources=None, asset=None):
     """Candles for `symbol` from the first venue that lists it, oldest first.
 
     Returns (series, source_name). The last bar may still be forming; callers
     decide whether to drop it (see forming()). Venue order: Coinbase, Binance
-    spot, Hyperliquid perps, Kraken (last 720 bars only). When the first venue
-    that lists the symbol covers under 80% of the requested days (a recent
-    listing), the other venues are tried too and the longest history wins,
-    because indicators like the 200-week average need the depth.
+    spot, Hyperliquid perps, Kraken (last 720 bars only), then Yahoo Finance
+    for stocks and ETFs. asset="stock" goes straight to Yahoo; asset="crypto"
+    never uses it. When the first venue that lists the symbol covers under 80%
+    of the requested days (a recent listing), the other crypto venues are
+    tried too and the longest history wins, because indicators like the
+    200-week average need the depth.
     """
+    if asset == "stock":
+        sources = ("Yahoo Finance",)
+    elif asset == "crypto":
+        sources = CRYPTO_SOURCES
     symbol, errors, best = symbol.upper(), [], None
     wanted = days * 86400 / INTERVALS[interval]
     for name, fn in CANDLE_SOURCES:
@@ -251,6 +300,10 @@ def load_candles(symbol, interval="1d", days=1500, sources=None):
         if len(s["t"]) < 2:
             errors.append(f"{name}: no candles")
             continue
+        if name == "Yahoo Finance":
+            if best is None:  # a stock or ETF: only when no crypto venue lists the symbol
+                best = (s, name)
+            break
         if best is None or len(s["t"]) > len(best[0]["t"]) * 1.2:
             best = (s, name)
         if len(best[0]["t"]) >= 0.8 * wanted:
@@ -261,7 +314,9 @@ def load_candles(symbol, interval="1d", days=1500, sources=None):
 
 
 def forming(series, interval="1d"):
-    """True when the last candle's period has not ended yet."""
+    """True when the last candle's period has not ended yet (for stocks: its session is still open)."""
+    if interval == "1d" and "forming_last" in series:
+        return series["forming_last"]
     return bool(series["t"]) and series["t"][-1] + INTERVALS[interval] > time.time()
 
 

@@ -7,9 +7,13 @@ can reach. Standard library only.
   python trade_plan.py BTC ETH SOL --brief   # just the plan block for each coin
   python trade_plan.py ZEC --side short      # force the short-side plan
   python trade_plan.py SOL --account 160000 --risk 1   # add position size for 1% account risk
+  python trade_plan.py SOL --account 160000 --risk 1 --max-position 20   # ...capped at 20% of the account
+  python trade_plan.py BTC ETH --out reports/  # also write <SYMBOL>_<horizon>.md and .json for a digest to read
   python trade_plan.py HYPE --no-derivs      # chart-only (faster; no funding, whales or liquidation map)
   python trade_plan.py HYPE --full           # plan + the full technical dossier underneath
   python trade_plan.py BTC --horizon both    # swing plan (days-weeks) and position plan (weeks-months)
+  python trade_plan.py BTC --pine btc.pine   # also write a TradingView indicator with the levels and alerts
+  python trade_plan.py MSTR IBIT --asset stock   # stocks and ETFs (Yahoo Finance; SPY is the benchmark)
   add --json for machine-readable output
 
 How the plan is built
@@ -48,6 +52,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works und
 import technicals as TA  # noqa: E402
 from market_data import FetchError  # noqa: E402
 
+CALIBRATION_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "references", "plan_calibration.json")
+MIN_TESTED = 20  # fewer filled trades than this: too few to quote a record
+
 INTRADAY = ("D pivot", "D Camarilla", "prior-day", "daily open")
 # Position plans (weeks to months) also drop short-term levels and positioning that turns over within days.
 SHORT_TERM = INTRADAY + ("W pivot", "W Camarilla", "prior-week", "weekly open", "20D", "55D", "21D EMA", "20D SMA",
@@ -63,6 +70,20 @@ EVIDENCE = ("trend", "momentum", "stretch", "signal record", "positioning", "liq
 
 def horizon_atr(a, horizon):
     return a["tf"]["1W"].get("atr") if horizon == "position" else a["tf"]["1D"].get("atr")
+
+
+def tested_record(p):
+    """The walk-forward record of plans of the same kind (horizon, side, with/against trend, grade), if any."""
+    try:
+        with open(CALIBRATION_PATH) as fh:
+            cal = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    key = f"{p['horizon']}|{p['side']}|{'against' if p['counter_trend'] else 'with'}|{p['grade']}"
+    c = cal.get("cells", {}).get(key)
+    if not c:
+        return None
+    return dict(c, key=key, period=f"{cal['from'][:4]}-{cal['to'][:4]}", symbols=", ".join(cal["symbols"]))
 
 
 def swing_zones(a, horizon="swing"):
@@ -168,16 +189,17 @@ def _evidence(a, backdrop, btc_ctx, cycle):
     ev.append(("positioning", max(-2, min(2, sum(v[1] for v in pos))),
                "; ".join(f"{v[0]}: {v[2]}" for v in pos) or "no derivatives data (spot only or --no-derivs)"))
     ev.append(("liquidity", sum(v[1] for v in liq), "; ".join(v[2] for v in liq) or "no liquidation map"))
-    if btc_ctx and a["symbol"] != "BTC":
+    bench_name = (btc_ctx or {}).get("name", "BTC")
+    if btc_ctx and a["symbol"] != bench_name:
         rel = (a["change"]["30d"] or 0) - (btc_ctx["30d"] or 0)
         v = 0.5 if rel > 0.10 else -0.5 if rel < -0.10 else 0
-        txt = f"30-day return {TA.pc(a['change']['30d'])} vs BTC {TA.pc(btc_ctx['30d'])}"
+        txt = f"30-day return {TA.pc(a['change']['30d'])} vs {bench_name} {TA.pc(btc_ctx['30d'])}"
         if btc_ctx["stance"].startswith(("Strong downtrend", "Downtrend")):
             v -= 0.5
-            txt += f"; BTC itself: {btc_ctx['stance'].lower()}"
+            txt += f"; {bench_name} itself: {btc_ctx['stance'].lower()}"
         ev.append(("relative strength", v, txt))
     else:
-        ev.append(("relative strength", 0, "BTC is the benchmark"))
+        ev.append(("relative strength", 0, f"{bench_name} is the benchmark"))
     se = a["seasonality"]
     cur = next(x for x in se["table"] if x["month"] == se["current_month"])
     v = 0
@@ -211,7 +233,8 @@ def _evidence(a, backdrop, btc_ctx, cycle):
             v, why = v + 1, why + [f"MVRV {mv['mvrv']:.2f}: price under the realized price"]
         elif mv and mv["z_score"] > 6:
             v, why = v - 1, why + [f"MVRV Z {mv['z_score']:.1f}: overheated"]
-        why.append(f"Mayer {cycle['mayer_multiple']:.2f}, {cycle['price_vs_200w']:.2f}x 200W"
+        g = lambda x, f="{:.2f}": "n/a" if x is None else f.format(x)  # noqa: E731
+        why.append(f"Mayer {g(cycle['mayer_multiple'])}, {g(cycle['price_vs_200w'])}x 200W"
                    + (f", MVRV {mv['mvrv']:.2f} (Z {mv['z_score']:.2f})" if mv else ""))
         ev.append(("cycle", v, "; ".join(why)))
     else:
@@ -331,8 +354,29 @@ def build_side(a, zones, side, ev_total, ev, horizon="swing"):
             "thesis_line": thesis_line, "counter_trend": counter, "type": kind, "horizon": horizon}
 
 
-def plan(sym, derivs=True, side=None, backdrop=None, btc=None, account=None, risk_pct=None, horizon="swing"):
-    a = TA.analyze(sym, with_derivs=derivs, bench=btc["bench"] if btc else None)
+_STOCK_BENCH = {}
+
+
+def stock_bench_ctx():
+    """SPY's 30-day return and stance: the benchmark for stocks and ETFs (cached per run)."""
+    if "ctx" not in _STOCK_BENCH:
+        b = TA.analyze("SPY", asset="stock")
+        _STOCK_BENCH["ctx"] = {"30d": b["change"]["30d"], "stance": b["score"]["stance"], "name": "SPY"}
+    return _STOCK_BENCH["ctx"]
+
+
+def plan(sym, derivs=True, side=None, backdrop=None, btc=None, account=None, risk_pct=None, horizon="swing",
+         analysis=None, asset=None, max_position=None):
+    """Build the plan. Pass `analysis` (from technicals.analyze) to reuse one analysis for several horizons.
+    asset: "crypto", "stock" or None to detect; stocks use SPY as the benchmark and skip derivatives."""
+    a = analysis if analysis is not None else TA.analyze(sym, with_derivs=derivs, bench=btc["bench"] if btc else None,
+                                                         asset=asset)
+    if a.get("asset") == "stock" and sym.upper() != "SPY":
+        try:
+            btc = {"bench": None, "ctx": stock_bench_ctx()}
+        except FetchError:
+            btc = None
+    a = dict(a)  # cycle levels below must not leak into a shared analysis
     cycle = None
     if a["symbol"] == "BTC":
         cycle = TA.cycle_gauges(a["_series"]["dc"], a["_series"]["wc"], a["live"])
@@ -345,8 +389,10 @@ def plan(sym, derivs=True, side=None, backdrop=None, btc=None, account=None, ris
     sides = {}
     for s in ("long", "short"):
         sides[s] = build_side(a, zones, s, total, ev, horizon)
-    primary = side or ("long" if total > 0.5 else "short" if total < -0.5 else
-                       max(("long", "short"), key=lambda s: (sides[s] or {}).get("grade_points", -99)))
+        if sides[s]:
+            sides[s]["record"] = tested_record(sides[s])
+    # Neutral evidence leads with the long side: in the walk-forward, shorts were near breakeven in every regime.
+    primary = side or ("short" if total < -0.5 and sides["short"] else "long" if sides["long"] else "short")
     out = {"symbol": a["symbol"], "as_of": a["as_of"], "live": a["live"], "source": a["source"], "bias": bias,
            "bias_score": total, "evidence": [{"family": k, "vote": v, "reading": r} for k, v, r in ev],
            "primary": primary, "plans": sides, "zones": zones, "zone_tolerance": tol, "analysis": a,
@@ -355,8 +401,12 @@ def plan(sym, derivs=True, side=None, backdrop=None, btc=None, account=None, ris
     if p and account and risk_pct:
         risk_usd = account * risk_pct / 100
         units = risk_usd / abs(p["avg_entry"] - p["stop"])
-        out["sizing"] = {"account": account, "risk_pct": risk_pct, "risk_usd": risk_usd, "units": units,
-                         "notional": units * p["avg_entry"], "pct_of_account": units * p["avg_entry"] / account}
+        capped = False
+        if max_position and units * p["avg_entry"] > account * max_position / 100:
+            units, capped = account * max_position / 100 / p["avg_entry"], True
+        out["sizing"] = {"account": account, "risk_pct": risk_pct, "risk_usd": units * abs(p["avg_entry"] - p["stop"]),
+                         "units": units, "notional": units * p["avg_entry"], "pct_of_account": units * p["avg_entry"] / account,
+                         "capped": capped, "max_position": max_position}
     return out
 
 
@@ -369,9 +419,25 @@ def zone_text(z, n=4):
     return "; ".join(z["levels"][:n]) + (" …" if len(z["levels"]) > n else "")
 
 
+def record_line(p):
+    rec = p.get("record")
+    kind = f"{p['horizon']}, {p['side']}, {'against' if p['counter_trend'] else 'with'} the trend, grade {p['grade']}"
+    if not rec:
+        return f"Tested record ({kind}): none yet; run plan_backtest.py to build one."
+    if rec["fills"] < MIN_TESTED:
+        return f"Tested record ({kind}): only {rec['fills']} filled trades in testing, too few to quote."
+    verdict = "an edge in testing" if rec["avg_r"] >= 0.1 and rec["win_floor"] >= 0.45 else "no clear edge in testing"
+    return (f"Tested record ({kind}): {rec['win_rate'] * 100:.0f}% of {rec['fills']} filled trades won, average "
+            f"{rec['avg_r']:+.2f}R, {rec['r_per_plan']:+.2f}R per plan counting unfilled ones: {verdict} "
+            f"({rec['symbols']} weekly, {rec['period']}, chart-only, no fees).")
+
+
 def render_side(p, live, title):
-    L = [f"**{title}** · setup grade **{p['grade']}** ({'; '.join(p['grade_why'])})",
-         "", "| Step | Price | From live | Reward/risk | Why this level |", "|---|---|---|---|---|"]
+    L = [f"**{title}** · setup grade **{p['grade']}** ({'; '.join(p['grade_why'])})", "", record_line(p)]
+    if p["side"] == "short":
+        L.append("Short plans tested near breakeven in every regime: use these levels to reduce or exit a holding "
+                 "unless you have a separate reason to short.")
+    L += ["", "| Step | Price | From live | Reward/risk | Why this level |", "|---|---|---|---|---|"]
     e1 = p["entry_1"]
     share = "50%" if p["entry_2"] else "100%"
     L.append(f"| Entry 1 ({share}) | {f(e1['low'])}-{f(e1['high'])} | {pc(e1['mid'] / live - 1)} | | {zone_text(e1)} (strength {e1['weight']:.1f}) |")
@@ -444,8 +510,10 @@ def render(o, brief=False, full=False):
         L.append("\nJournal row: " + " | ".join(f"{k}: {v}" for k, v in jr.items()))
     if o.get("sizing"):
         s = o["sizing"]
+        cap = (f" Capped at the {s['max_position']:g}% position limit, so the stop now risks {f(s['risk_usd'])} "
+               f"({pc(s['risk_usd'] / s['account']).lstrip('+')} of the account)." if s.get("capped") else "")
         L.append(f"Size for {s['risk_pct']}% risk on {f(s['account'])}: {s['units']:,.4g} units, {f(s['notional'])} notional "
-                 f"({pc(s['pct_of_account']).lstrip('+')} of the account; above 100% means leverage).")
+                 f"({pc(s['pct_of_account']).lstrip('+')} of the account; above 100% means leverage).{cap}")
     L.append("\n### Evidence\n| Family | Vote | Reading |\n|---|---|---|")
     for e in o["evidence"]:
         L.append(f"| {e['family']} | {e['vote']:+.2f} | {e['reading']} |")
@@ -472,6 +540,98 @@ def render(o, brief=False, full=False):
     return "\n".join(L)
 
 
+def _pine_num(x):
+    return f"{x:.8g}"
+
+
+def to_pine(o, side=None):
+    """A TradingView Pine Script v6 indicator that draws one plan's levels and defines alerts on them."""
+    side = side or o["primary"]
+    p = o["plans"].get(side)
+    if not p:
+        return None
+    sym, hz, long = o["symbol"], o["horizon"], side == "long"
+    stamp = o["as_of"]
+    L = ["//@version=6",
+         f'indicator("{sym} {hz} {side} plan, {stamp[:10]}", overlay = true, max_labels_count = 50)',
+         f"// Generated by the crypto-analyst skill (trade_plan.py) at {stamp} from {o['source']} daily candles.",
+         f"// Bias {o['bias'].lower()} ({o['bias_score']:+.1f}), setup grade {p['grade']}. Levels are fixed at generation",
+         "// time: run trade_plan.py again and paste the new script to refresh them. Research, not advice.",
+         "",
+         "entryColor = color.new(color.green, 0)",
+         "stopColor = color.new(color.red, 0)",
+         "exitColor = color.new(color.blue, 0)",
+         "liqColor = color.new(color.gray, 30)",
+         ""]
+    zones = [("Entry 1", p["entry_1"])] + ([("Entry 2", p["entry_2"])] if p["entry_2"] else [])
+    for i, (name, z) in enumerate(zones, 1):
+        L += [f'z{i}Top = hline({_pine_num(z["high"])}, "{name} top", color = color.new(entryColor, 40), linestyle = hline.style_dotted)',
+              f'z{i}Bot = hline({_pine_num(z["low"])}, "{name} bottom", color = color.new(entryColor, 40), linestyle = hline.style_dotted)',
+              f'fill(z{i}Top, z{i}Bot, color = color.new(entryColor, 85), title = "{name} zone")']
+    L.append(f'hline({_pine_num(p["stop"])}, "Stop", color = stopColor, linestyle = hline.style_solid, linewidth = 2)')
+    for i, t in enumerate(p["targets"], 1):
+        L.append(f'hline({_pine_num(t["price"])}, "Exit {i}", color = exitColor, linestyle = hline.style_dashed)')
+    b = p.get("breakout")
+    if b:
+        L.append(f'hline({_pine_num(b["trigger"])}, "{"Breakout" if long else "Breakdown"} trigger", color = color.new(color.orange, 0), linestyle = hline.style_dashed)')
+    liq = [lv for lv in o["analysis"].get("extra_levels", []) if "liquidation" in lv["label"]]
+    liq = sorted(liq, key=lambda lv: -lv["weight"])[:4]
+    for i, lv in enumerate(liq, 1):
+        L.append(f'hline({_pine_num(lv["price"])}, "Liquidations {i}", color = liqColor, linestyle = hline.style_dotted)')
+    L += ["", "var label[] notes = array.new<label>()", "if barstate.islast",
+          "    for l in notes", "        label.delete(l)", "    array.clear(notes)"]
+
+    def lab(price, text, color):
+        return (f'    array.push(notes, label.new(bar_index + 3, {_pine_num(price)}, "{text}", style = label.style_label_left, '
+                f'color = color.new({color}, 75), textcolor = chart.fg_color, size = size.small))')
+
+    for name, z in zones:
+        L.append(lab(z["mid"], f"{name} {TA.f(z['low'])}-{TA.f(z['high'])} (strength {z['weight']:.1f})", "entryColor"))
+    L.append(lab(p["stop"], f"Stop {TA.f(p['stop'])}", "stopColor"))
+    for i, t in enumerate(p["targets"], 1):
+        L.append(lab(t["price"], f"Exit {i} {TA.f(t['price'])} ({t['rr']:.1f}R)", "exitColor"))
+    for lv in liq:
+        L.append(lab(lv["price"], lv["label"].replace('"', "'"), "liqColor"))
+    L.append("")
+    e1 = p["entry_1"]
+    edge = "high" if long else "low"
+    into = f'{"low" if long else "high"} {"<=" if long else ">="} {_pine_num(e1[edge])}'
+    before = f'{"low" if long else "high"}[1] {">" if long else "<"} {_pine_num(e1[edge])}'
+    L.append(f'alertcondition({into} and {before}, "{sym} entry 1", "{sym} traded into entry zone 1 ({TA.f(e1["low"])}-{TA.f(e1["high"])})")')
+    if p["entry_2"]:
+        e2 = p["entry_2"]
+        L.append(f'alertcondition({("low" if long else "high")} {"<=" if long else ">="} {_pine_num(e2[edge])} and '
+                 f'{("low" if long else "high")}[1] {">" if long else "<"} {_pine_num(e2[edge])}, "{sym} entry 2", '
+                 f'"{sym} traded into entry zone 2 ({TA.f(e2["low"])}-{TA.f(e2["high"])})")')
+    cross_stop = "ta.crossunder" if long else "ta.crossover"
+    L.append(f'alertcondition({cross_stop}(close, {_pine_num(p["stop"])}), "{sym} stop", "{sym} closed beyond the stop {TA.f(p["stop"])}")')
+    cross_t = "ta.crossover" if long else "ta.crossunder"
+    reach = "high" if long else "low"
+    for i, t in enumerate(p["targets"], 1):
+        L.append(f'alertcondition({cross_t}({reach}, {_pine_num(t["price"])}), "{sym} exit {i}", '
+                 f'"{sym} reached exit {i} at {TA.f(t["price"])}")')
+    if b:
+        L.append(f'alertcondition({cross_t}(close, {_pine_num(b["trigger"])}), "{sym} {"breakout" if long else "breakdown"}", '
+                 f'"{sym} closed {"above" if long else "below"} {TA.f(b["trigger"])}: check volume (1.5x the 20-day average) before acting")')
+    return "\n".join(L) + "\n"
+
+
+def write_pine(outs, target, side=None):
+    paths = []
+    many = len(outs) > 1 or not target.endswith(".pine")
+    if many:
+        os.makedirs(target, exist_ok=True)
+    for o in outs:
+        code = to_pine(o, side)
+        if not code:
+            continue
+        path = os.path.join(target, f"{o['symbol']}_{o['horizon']}_{side or o['primary']}.pine") if many else target
+        with open(path, "w") as fh:
+            fh.write(code)
+        paths.append(path)
+    return paths
+
+
 def strip(o):
     o = dict(o)
     a = dict(o.pop("analysis"))
@@ -494,6 +654,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("symbols", nargs="+")
     p.add_argument("--side", choices=["long", "short"])
+    p.add_argument("--asset", choices=["crypto", "stock"], help="force the asset type (default: crypto venues first, "
+                   "then Yahoo Finance for stocks and ETFs)")
     p.add_argument("--horizon", choices=["swing", "position", "both"], default="swing",
                    help="swing: days to weeks (default); position: weeks to months; both: one plan each")
     p.add_argument("--brief", action="store_true", help="plan block only")
@@ -502,6 +664,11 @@ def main():
     p.add_argument("--no-backdrop", action="store_true", help="skip the macro backdrop check")
     p.add_argument("--account", type=float, help="account size in USD, for position sizing")
     p.add_argument("--risk", type=float, help="percent of the account to risk per trade, e.g. 1")
+    p.add_argument("--max-position", type=float, help="cap any one position at this percent of the account, e.g. 20")
+    p.add_argument("--out", metavar="DIR", help="also write each plan to DIR as <SYMBOL>_<horizon>.md and .json "
+                   "(for a digest or another tool to read from disk)")
+    p.add_argument("--pine", metavar="PATH", help="also write a TradingView Pine Script v6 indicator with the plan's "
+                   "levels and alerts (a .pine file, or a folder when there are several plans)")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
     backdrop = None
@@ -512,7 +679,7 @@ def main():
         except Exception:
             backdrop = None
     btc = None
-    if any(s.upper() != "BTC" for s in args.symbols):
+    if args.asset != "stock" and any(s.upper() != "BTC" for s in args.symbols):
         try:
             bench = TA.bench_series()
             b = TA.analyze("BTC", with_derivs=False)
@@ -525,9 +692,22 @@ def main():
         for hz in horizons:
             try:
                 outs.append(plan(sym, derivs=not args.no_derivs, side=args.side, backdrop=backdrop, btc=btc,
-                                 account=args.account, risk_pct=args.risk, horizon=hz))
+                                 account=args.account, risk_pct=args.risk, horizon=hz, asset=args.asset,
+                                 max_position=args.max_position))
             except FetchError as e:
                 print(f"skipped {sym.upper()}: {e}", file=sys.stderr)
+    if args.pine:
+        for path in write_pine(outs, args.pine, args.side):
+            print(f"wrote {path}", file=sys.stderr)
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        for o in outs:
+            base = os.path.join(args.out, f"{o['symbol']}_{o['horizon']}")
+            with open(base + ".md", "w") as fh:
+                fh.write(render(o, brief=args.brief, full=args.full) + "\n")
+            with open(base + ".json", "w") as fh:
+                json.dump(strip(o), fh, indent=2, default=str)
+            print(f"wrote {base}.md and .json", file=sys.stderr)
     if args.json:
         print(json.dumps([strip(o) for o in outs], indent=2, default=str))
         return

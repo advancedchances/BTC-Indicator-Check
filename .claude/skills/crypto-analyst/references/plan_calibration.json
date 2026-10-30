@@ -1,0 +1,221 @@
+{
+ "cells": {
+  "position|long|against|A": {
+   "avg_r": null,
+   "fills": 0,
+   "plans": 1,
+   "r_per_plan": 0.0,
+   "win_floor": null,
+   "win_rate": null
+  },
+  "position|long|against|B": {
+   "avg_r": -1.0,
+   "fills": 5,
+   "plans": 24,
+   "r_per_plan": -0.208,
+   "win_floor": 0.0,
+   "win_rate": 0.0
+  },
+  "position|long|against|C": {
+   "avg_r": 0.016,
+   "fills": 130,
+   "plans": 444,
+   "r_per_plan": 0.005,
+   "win_floor": 0.339,
+   "win_rate": 0.408
+  },
+  "position|long|with|A": {
+   "avg_r": 0.01,
+   "fills": 98,
+   "plans": 299,
+   "r_per_plan": 0.003,
+   "win_floor": 0.349,
+   "win_rate": 0.429
+  },
+  "position|long|with|A++": {
+   "avg_r": 0.039,
+   "fills": 27,
+   "plans": 69,
+   "r_per_plan": 0.015,
+   "win_floor": 0.332,
+   "win_rate": 0.481
+  },
+  "position|long|with|B": {
+   "avg_r": -0.086,
+   "fills": 77,
+   "plans": 232,
+   "r_per_plan": -0.029,
+   "win_floor": 0.377,
+   "win_rate": 0.468
+  },
+  "position|long|with|C": {
+   "avg_r": 0.033,
+   "fills": 41,
+   "plans": 96,
+   "r_per_plan": 0.014,
+   "win_floor": 0.275,
+   "win_rate": 0.39
+  },
+  "position|short|against|B": {
+   "avg_r": -0.747,
+   "fills": 3,
+   "plans": 11,
+   "r_per_plan": -0.204,
+   "win_floor": 0.0,
+   "win_rate": 0.0
+  },
+  "position|short|against|C": {
+   "avg_r": -0.194,
+   "fills": 244,
+   "plans": 492,
+   "r_per_plan": -0.096,
+   "win_floor": 0.238,
+   "win_rate": 0.283
+  },
+  "position|short|with|A": {
+   "avg_r": -0.391,
+   "fills": 59,
+   "plans": 198,
+   "r_per_plan": -0.116,
+   "win_floor": 0.202,
+   "win_rate": 0.288
+  },
+  "position|short|with|A++": {
+   "avg_r": -0.004,
+   "fills": 9,
+   "plans": 30,
+   "r_per_plan": -0.001,
+   "win_floor": 0.218,
+   "win_rate": 0.444
+  },
+  "position|short|with|B": {
+   "avg_r": -0.134,
+   "fills": 74,
+   "plans": 214,
+   "r_per_plan": -0.046,
+   "win_floor": 0.329,
+   "win_rate": 0.419
+  },
+  "position|short|with|C": {
+   "avg_r": -0.325,
+   "fills": 33,
+   "plans": 118,
+   "r_per_plan": -0.091,
+   "win_floor": 0.216,
+   "win_rate": 0.333
+  },
+  "swing|long|against|A": {
+   "avg_r": null,
+   "fills": 0,
+   "plans": 2,
+   "r_per_plan": 0.0,
+   "win_floor": null,
+   "win_rate": null
+  },
+  "swing|long|against|B": {
+   "avg_r": -0.183,
+   "fills": 18,
+   "plans": 34,
+   "r_per_plan": -0.097,
+   "win_floor": 0.227,
+   "win_rate": 0.389
+  },
+  "swing|long|against|C": {
+   "avg_r": 0.13,
+   "fills": 206,
+   "plans": 477,
+   "r_per_plan": 0.056,
+   "win_floor": 0.405,
+   "win_rate": 0.461
+  },
+  "swing|long|with|A": {
+   "avg_r": 0.31,
+   "fills": 128,
+   "plans": 259,
+   "r_per_plan": 0.153,
+   "win_floor": 0.49,
+   "win_rate": 0.562
+  },
+  "swing|long|with|A++": {
+   "avg_r": -0.092,
+   "fills": 29,
+   "plans": 68,
+   "r_per_plan": -0.039,
+   "win_floor": 0.219,
+   "win_rate": 0.345
+  },
+  "swing|long|with|B": {
+   "avg_r": -0.02,
+   "fills": 127,
+   "plans": 277,
+   "r_per_plan": -0.009,
+   "win_floor": 0.409,
+   "win_rate": 0.48
+  },
+  "swing|long|with|C": {
+   "avg_r": -0.214,
+   "fills": 45,
+   "plans": 91,
+   "r_per_plan": -0.106,
+   "win_floor": 0.289,
+   "win_rate": 0.4
+  },
+  "swing|short|against|B": {
+   "avg_r": -0.026,
+   "fills": 6,
+   "plans": 13,
+   "r_per_plan": -0.012,
+   "win_floor": 0.347,
+   "win_rate": 0.667
+  },
+  "swing|short|against|C": {
+   "avg_r": -0.336,
+   "fills": 294,
+   "plans": 559,
+   "r_per_plan": -0.177,
+   "win_floor": 0.235,
+   "win_rate": 0.276
+  },
+  "swing|short|with|A": {
+   "avg_r": 0.034,
+   "fills": 89,
+   "plans": 192,
+   "r_per_plan": 0.016,
+   "win_floor": 0.355,
+   "win_rate": 0.438
+  },
+  "swing|short|with|A++": {
+   "avg_r": -0.144,
+   "fills": 15,
+   "plans": 43,
+   "r_per_plan": -0.05,
+   "win_floor": 0.223,
+   "win_rate": 0.4
+  },
+  "swing|short|with|B": {
+   "avg_r": -0.058,
+   "fills": 102,
+   "plans": 211,
+   "r_per_plan": -0.028,
+   "win_floor": 0.41,
+   "win_rate": 0.49
+  },
+  "swing|short|with|C": {
+   "avg_r": 0.008,
+   "fills": 69,
+   "plans": 124,
+   "r_per_plan": 0.004,
+   "win_floor": 0.452,
+   "win_rate": 0.551
+  }
+ },
+ "from": "2017-01-01",
+ "method": "plan_backtest.py walk-forward, chart-only plans, no fees or slippage",
+ "step_days": 7,
+ "symbols": [
+  "BTC",
+  "ETH",
+  "SOL"
+ ],
+ "to": "2026-10-25"
+}

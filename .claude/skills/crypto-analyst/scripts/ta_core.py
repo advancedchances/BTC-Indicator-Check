@@ -372,7 +372,7 @@ def resample(s, rule):
 
 
 def slice_series(s, a, b=None):
-    return {k: v[a:b] for k, v in s.items()}
+    return {k: v[a:b] for k, v in s.items() if isinstance(v, list)}
 
 
 # ---------------------------------------------------------------- statistics
