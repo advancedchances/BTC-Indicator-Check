@@ -1067,6 +1067,12 @@ def strip(a):
     return a
 
 
+def _json_anywhere(sub):
+    """Let --json follow the subcommand too (`liqmap BTC --json`), not only precede it."""
+    for sp in sub.choices.values():
+        sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="emit JSON")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--json", action="store_true", help="emit JSON")
@@ -1077,6 +1083,7 @@ def main():
         if name in ("analyze", "levels"):
             sp.add_argument("--derivs", action="store_true", help="add funding, OI, whale positions and liquidation map")
     sub.add_parser("cycle", help="BTC cycle gauges")
+    _json_anywhere(sub)
     args = p.parse_args()
 
     if args.cmd == "cycle":

@@ -864,6 +864,12 @@ def render_sentiment(s):
     return "\n".join(L)
 
 
+def _json_anywhere(sub):
+    """Let --json follow the subcommand too (`liqmap BTC --json`), not only precede it."""
+    for sp in sub.choices.values():
+        sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="emit JSON")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--json", action="store_true")
@@ -872,6 +878,7 @@ def main():
         sp = sub.add_parser(name)
         sp.add_argument("symbols", nargs="+")
     sub.add_parser("sentiment")
+    _json_anywhere(sub)
     args = p.parse_args()
     if args.cmd == "sentiment":
         s = sentiment()

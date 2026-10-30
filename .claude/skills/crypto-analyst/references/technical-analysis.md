@@ -62,9 +62,9 @@ Add `--json` to any of them for machine-readable output. All of them use closed 
    - Swing plans drop intraday levels (daily pivots, prior-day high and low).
    - Position plans also drop weekly levels and positioning, and for BTC they add cycle floors: realized price (from MVRV), power-law fair value and its −1 sd band, the 2-year MA and 0.8x the 200D SMA.
 2. **Zones.** Levels within 0.35 ATR of each other merge into a zone, and a zone's strength is the sum of its weights. A zone of 7 or more means several independent methods agree on the price.
-3. **Entries.** Entry 1 is the strongest zone 0.3–2.5 ATR from price, discounted for distance. Entry 2 is a deeper zone of strength 4 or more, used to scale in.
+3. **Entries.** Entry 1 is the strongest zone 0.3–2.5 ATR from price, discounted by 0.6 strength per ATR of distance. Entry 2 is a deeper zone of strength 4 or more, used to scale in.
 4. **Stop.** The stop goes beyond the deeper zone plus 0.5 ATR (at least 1%). If a modeled liquidation cluster or whale liquidation pocket sits just past it, the stop moves beyond the pocket. Stops parked inside a pocket get run when it is swept.
-5. **Exits.** Exits sit just in front of the next three strong zones (above them for shorts), each with its reward/risk from the average entry. When no zone remains, Fibonacci extensions (1.272, 1.618) of the 180-day swing stand in.
+5. **Exits.** Exits sit just in front of the next three strong zones (above them for shorts), each with its reward/risk from the average entry. When no zone remains, Fibonacci extensions (1.272, 1.618) of the 180-day swing stand in if they are within 35% of price; otherwise the exit list stays short.
 6. **Alternative entry.** The breakout (or breakdown) level is the nearest strong zone on the other side, with its own stop and a target at least 1.5 ATR away.
 7. **Evidence and bias.** Ten families vote: trend, momentum, stretch, signal record, positioning, liquidity, relative strength against BTC, seasonality, macro backdrop and BTC cycle. Most votes are capped at ±2. The sum is the bias: +2.5 or more is a long bias, +1 to +2.5 leans long, and between −1 and +1 is neutral. Position plans halve positioning, liquidity and signal record, and double cycle.
 8. **Grade (A++/A/B/C).** The grade adds up points:

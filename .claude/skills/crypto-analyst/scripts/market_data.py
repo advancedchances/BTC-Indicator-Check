@@ -401,6 +401,12 @@ def cmd_hl_buybacks(args):
           "compare with DefiLlama's holders revenue for Hyperliquid.")
 
 
+def _json_anywhere(sub):
+    """Let --json follow the subcommand too (`liqmap BTC --json`), not only precede it."""
+    for sp in sub.choices.values():
+        sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="emit JSON")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--json", action="store_true", help="emit JSON")
@@ -418,6 +424,7 @@ def main():
     sm = sub.add_parser("mcaps", help="CoinGecko market caps via DefiLlama")
     sm.add_argument("ids", nargs="+")
     sub.add_parser("hl-buybacks", help="HYPE held by Hyperliquid's buyback (Assistance Fund) address")
+    _json_anywhere(sub)
     args = p.parse_args()
     {"check": cmd_check, "prices": cmd_prices, "candles": cmd_candles, "revenue": cmd_revenue,
      "mcaps": cmd_mcaps, "hl-buybacks": cmd_hl_buybacks}[args.cmd](args)

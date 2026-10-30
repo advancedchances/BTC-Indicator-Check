@@ -226,7 +226,7 @@ def build_side(a, zones, side, ev_total, ev, horizon="swing"):
     long = side == "long"
     entry_side, target_side = ("support", "resistance") if long else ("resistance", "support")
     first = pick(zones, entry_side, live, atr, NEAR_ATR, 2.5)
-    first = max(first, key=lambda z: z["weight"] - 0.3 * z["atr_away"]) if first else None
+    first = max(first, key=lambda z: z["weight"] - 0.6 * z["atr_away"]) if first else None
     if first is None:
         cand = pick(zones, entry_side, live, atr, NEAR_ATR, FAR_ATR)
         first = min(cand, key=lambda z: z["atr_away"]) if cand else None
@@ -267,6 +267,8 @@ def build_side(a, zones, side, ev_total, ev, horizon="swing"):
         rng = sw["swing_high"] - sw["swing_low"]
         for ext in (1.272, 1.618):
             price = sw["swing_low"] + ext * rng if long else sw["swing_high"] - ext * rng
+            if abs(price / live - 1) > 0.35:  # too far to plan around; leave the exit list short instead
+                continue
             if (long and price > (targets[-1]["price"] if targets else avg)) or (not long and price < (targets[-1]["price"] if targets else avg) and price > 0):
                 targets.append({"price": price, "zone": {"levels": [f"fib extension {ext}"], "weight": 0}, "rr":
                                 ((price - avg) if long else (avg - price)) / risk if risk > 0 else None})
@@ -293,7 +295,8 @@ def build_side(a, zones, side, ev_total, ev, horizon="swing"):
     rr_g = min(rr2, 2 * rr1, 4.0) if rr1 is not None and rr2 is not None else None
     pts, why = 0, []
     pts += agree - against
-    why.append(f"{agree} evidence families agree, {against} disagree")
+    why.append(f"{agree} evidence {'family agrees' if agree == 1 else 'families agree'}, "
+               f"{against} {'disagrees' if against == 1 else 'disagree'}")
     if rr_g is not None:
         pts += 2 if rr_g >= 3 else 1 if rr_g >= 2 else -1 if rr_g < 1.5 else 0
         why.append(f"reward/risk {rr_g:.1f} (graded)")
