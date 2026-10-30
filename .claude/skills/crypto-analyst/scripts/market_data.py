@@ -16,6 +16,7 @@ Usage:
   python market_data.py candles SKY --start 2026-09-25T05:00 --end 2026-09-25T06:00 --granularity 3600
   python market_data.py revenue aave sky hyperliquid     # DefiLlama fees, revenue, holders revenue
   python market_data.py mcaps sky aave hyperliquid       # CoinGecko market caps via DefiLlama (CoinGecko ids)
+  python market_data.py hl-buybacks                      # HYPE held by Hyperliquid's buyback address
   add --json to any command for machine-readable output
 
 Prices use Coinbase Exchange products quoted in USD (SKY-USD). A product
@@ -31,6 +32,7 @@ import argparse
 import datetime as dt
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -49,8 +51,21 @@ SOURCES = [
     ("Hyperliquid (perps, positioning)", "https://api.hyperliquid.xyz/info"),
     ("Blockscout Ethereum (on-chain)", "https://eth.blockscout.com/api/v2/stats"),
     ("mempool.space (BTC fees)", "https://mempool.space/api/v1/fees/recommended"),
+    ("Binance spot mirror (candles fallback)", "https://data-api.binance.vision/api/v3/ping"),
+    ("OKX (funding, OI history, liquidations)", "https://www.okx.com/api/v5/public/funding-rate?instId=BTC-USDT-SWAP"),
+    ("Bitget (funding, OI)", "https://api.bitget.com/api/v2/mix/market/current-fund-rate?symbol=BTCUSDT&productType=usdt-futures"),
+    ("Gate (funding)", "https://api.gateio.ws/api/v4/futures/usdt/contracts/BTC_USDT"),
+    ("dYdX (funding, OI)", "https://indexer.dydx.trade/v4/perpetualMarkets?ticker=BTC-USD"),
+    ("Deribit (options, DVOL, basis)", "https://www.deribit.com/api/v2/public/ticker?instrument_name=BTC-PERPETUAL"),
+    ("alternative.me (Fear & Greed)", "https://api.alternative.me/fng/?limit=1"),
+    ("CoinMetrics community (MVRV)", "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=btc&metrics=CapMVRVCur&page_size=1&paging_from=end"),
+    ("CoinGecko global (dominance)", "https://api.coingecko.com/api/v3/global"),
+    ("Yahoo Finance (DXY, S&P 500)", "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?range=5d&interval=1d"),
+    ("Binance futures (funding, OI)", "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT"),
+    ("Bybit (funding, OI)", "https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT"),
 ]
 POST_BODIES = {"https://api.hyperliquid.xyz/info": {"type": "allMids"}}
+HL_INFO = "https://api.hyperliquid.xyz/info"
 
 
 class FetchError(Exception):
@@ -72,7 +87,7 @@ def fetch(url, body=None):
         text = e.read()[:200].decode(errors="replace").strip()
         if e.code == 429:
             raise FetchError("rate-limited", "the site's free tier refused; wait or use another source")
-        if e.code == 451:
+        if e.code == 451 or (e.code == 403 and "country" in text.lower()):
             raise FetchError("geo-blocked", "the site refuses this region")
         if e.code in (401, 403):
             raise FetchError("refused by site", f"HTTP {e.code} {text[:80]} (API key or User-Agent rule)")
@@ -140,6 +155,114 @@ def parse_time(s):
     s = s.strip()
     fmt = "%Y-%m-%dT%H:%M" if "T" in s else "%Y-%m-%d"
     return dt.datetime.strptime(s, fmt).replace(tzinfo=dt.timezone.utc)
+
+
+# ---------------------------------------------------------------- candle history with fallbacks
+
+INTERVALS = {"1h": 3600, "6h": 21600, "1d": 86400}
+# Tickers that differ by venue: {symbol: {venue: ticker}}
+ALIASES = {"LIGHTER": {"hyperliquid": "LIT"}, "LIT": {"coinbase": "LIGHTER"}}
+
+
+def _series(rows):
+    """rows: [(t, o, h, l, c, v)] -> dict of lists, deduplicated and sorted by time."""
+    rows = sorted({int(r[0]): r for r in rows}.values())
+    keys = "tohlcv"
+    return {k: [int(r[0]) if k == "t" else float(r[i]) for r in rows] for i, k in enumerate(keys)}
+
+
+def _coinbase(symbol, interval, days):
+    product = ALIASES.get(symbol, {}).get("coinbase", symbol) + "-USD"
+    g = INTERVALS[interval]
+    end = int(time.time()) // g * g + g
+    stop, rows = end - days * 86400, []
+    while end > stop:
+        start = max(end - 300 * g, stop)
+        data = fetch(f"https://api.exchange.coinbase.com/products/{product}/candles?granularity={g}"
+                     f"&start={dt.datetime.fromtimestamp(start, dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ}"
+                     f"&end={dt.datetime.fromtimestamp(end, dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ}")
+        if isinstance(data, dict):
+            raise FetchError("not listed", data.get("message", "unknown product"))
+        if not data and rows:
+            break  # walked back past the listing date
+        rows += [(c[0], c[3], c[2], c[1], c[4], c[5]) for c in data]
+        end = start
+        time.sleep(0.12)  # public limit is 10 requests a second
+    return _series(rows)
+
+
+def _binance(symbol, interval, days):
+    pair = ALIASES.get(symbol, {}).get("binance", symbol) + "USDT"
+    step = INTERVALS[interval] * 1000
+    cursor, now, rows = int(time.time() * 1000) - days * 86400 * 1000, int(time.time() * 1000), []
+    while cursor < now:
+        data = fetch(f"https://data-api.binance.vision/api/v3/klines?symbol={pair}&interval={interval}"
+                     f"&startTime={cursor}&limit=1000")
+        if not data:
+            break
+        rows += [(k[0] // 1000, k[1], k[2], k[3], k[4], k[5]) for k in data]
+        cursor = data[-1][0] + step
+        if len(data) < 1000:
+            break
+    return _series(rows)
+
+
+def _hyperliquid(symbol, interval, days):
+    coin = ALIASES.get(symbol, {}).get("hyperliquid", symbol)
+    now = int(time.time() * 1000)
+    data = fetch(HL_INFO, {"type": "candleSnapshot", "req": {"coin": coin, "interval": interval,
+                                                             "startTime": now - days * 86400 * 1000, "endTime": now}})
+    return _series([(c["t"] // 1000, c["o"], c["h"], c["l"], c["c"], c["v"]) for c in data or []])
+
+
+def _kraken(symbol, interval, days):
+    pair = ALIASES.get(symbol, {}).get("kraken", symbol) + "USD"
+    data = fetch(f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval={INTERVALS[interval] // 60}")
+    if data.get("error"):
+        raise FetchError("not listed", "; ".join(data["error"]))
+    rows = next(v for k, v in data["result"].items() if k != "last")
+    return _series([(r[0], r[1], r[2], r[3], r[4], r[6]) for r in rows])
+
+
+CANDLE_SOURCES = (("Coinbase Exchange", _coinbase), ("Binance spot (USDT)", _binance),
+                  ("Hyperliquid perp", _hyperliquid), ("Kraken", _kraken))
+
+
+def load_candles(symbol, interval="1d", days=1500, sources=None):
+    """Candles for `symbol` from the first venue that lists it, oldest first.
+
+    Returns (series, source_name). The last bar may still be forming; callers
+    decide whether to drop it (see forming()). Venue order: Coinbase, Binance
+    spot, Hyperliquid perps, Kraken (last 720 bars only). When the first venue
+    that lists the symbol covers under 80% of the requested days (a recent
+    listing), the other venues are tried too and the longest history wins,
+    because indicators like the 200-week average need the depth.
+    """
+    symbol, errors, best = symbol.upper(), [], None
+    wanted = days * 86400 / INTERVALS[interval]
+    for name, fn in CANDLE_SOURCES:
+        if sources and name not in sources:
+            continue
+        try:
+            s = fn(symbol, interval, days)
+        except FetchError as e:
+            errors.append(f"{name}: {e.kind}")
+            continue
+        if len(s["t"]) < 2:
+            errors.append(f"{name}: no candles")
+            continue
+        if best is None or len(s["t"]) > len(best[0]["t"]) * 1.2:
+            best = (s, name)
+        if len(best[0]["t"]) >= 0.8 * wanted:
+            break
+    if best:
+        return best
+    raise FetchError("no candles", f"{symbol}: " + "; ".join(errors))
+
+
+def forming(series, interval="1d"):
+    """True when the last candle's period has not ended yet."""
+    return bool(series["t"]) and series["t"][-1] + INTERVALS[interval] > time.time()
 
 
 def cmd_candles(args):
@@ -254,6 +377,36 @@ def cmd_mcaps(args):
     print("\nSource: CoinGecko circulating market cap, served by DefiLlama's coins API.")
 
 
+HL_ASSISTANCE_FUND = "0xfefefefefefefefefefefefefefefefefefefefe"
+
+
+def cmd_hl_buybacks(args):
+    """HYPE held by Hyperliquid's Assistance Fund, which buys HYPE with protocol fees (what ASXN charts)."""
+    try:
+        st = fetch(HL_INFO, {"type": "spotClearinghouseState", "user": HL_ASSISTANCE_FUND})
+        mids = fetch(HL_INFO, {"type": "allMids"})
+    except FetchError as e:
+        sys.exit(f"hl-buybacks: {e}")
+    bal = next((b for b in st.get("balances", []) if b["coin"] == "HYPE"), None)
+    if not bal:
+        sys.exit("hl-buybacks: no HYPE balance found at the Assistance Fund address")
+    held, price = float(bal["total"]), float(mids.get("HYPE") or 0)
+    out = {"address": HL_ASSISTANCE_FUND, "hype_held": held, "hype_price": price, "value_usd": held * price,
+           "as_of": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M")}
+    if args.json:
+        print(json.dumps(out, indent=2))
+        return
+    print(f"Hyperliquid Assistance Fund ({HL_ASSISTANCE_FUND}) holds {held:,.0f} HYPE, worth ${held * price / 1e9:,.2f}B at "
+          f"${price:,.2f} ({out['as_of']} UTC). Run it again later and diff the balance to measure buybacks over that window; "
+          "compare with DefiLlama's holders revenue for Hyperliquid.")
+
+
+def _json_anywhere(sub):
+    """Let --json follow the subcommand too (`liqmap BTC --json`), not only precede it."""
+    for sp in sub.choices.values():
+        sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="emit JSON")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--json", action="store_true", help="emit JSON")
@@ -270,9 +423,11 @@ def main():
     sr.add_argument("slugs", nargs="+")
     sm = sub.add_parser("mcaps", help="CoinGecko market caps via DefiLlama")
     sm.add_argument("ids", nargs="+")
+    sub.add_parser("hl-buybacks", help="HYPE held by Hyperliquid's buyback (Assistance Fund) address")
+    _json_anywhere(sub)
     args = p.parse_args()
     {"check": cmd_check, "prices": cmd_prices, "candles": cmd_candles, "revenue": cmd_revenue,
-     "mcaps": cmd_mcaps}[args.cmd](args)
+     "mcaps": cmd_mcaps, "hl-buybacks": cmd_hl_buybacks}[args.cmd](args)
 
 
 if __name__ == "__main__":

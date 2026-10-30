@@ -25,9 +25,15 @@ Cap codes:
   MULTISIG_NO_TIMELOCK    critical contracts upgradeable by a small multisig with no timelock -> max 7
   UNVERIFIABLE_METRIC     key thesis metric not independently verifiable -> max 7
 
+Tiers: scores closer together than --tie-band (default 0.7) are treated as
+tied and share a tier. In the 17 Oct 2026 follow-up, correcting input data
+moved scores by 0.7 points on average while the whole finalist list spanned
+0.8, so a 0.2-point gap is noise: rank by tier, not by decimal.
+
 Usage:
   python research_score.py --template > scores.csv
   python research_score.py scores.csv
+  python research_score.py scores.csv --tie-band 0.5
   python research_score.py scores.csv --json
 """
 
@@ -52,6 +58,7 @@ CAPS = {
     "UNVERIFIABLE_METRIC": 7,
 }
 FIELDS = ["asset", "ticker", *WEIGHTS, "caps", "previous", "note"]
+TIE_BAND = Decimal("0.7")  # measured input noise; see the docstring
 
 
 def band(score):
@@ -114,8 +121,18 @@ def score(row):
     }
 
 
-def to_markdown(rows):
-    headers = ["Asset", "Traction", "Value", "Valuation", "Catalysts", "Moat", "Evidence",
+def assign_tiers(rows, band_width):
+    """Rows sorted by score; a new tier starts when the gap to the tier's top score exceeds the band."""
+    tier, top = 0, None
+    for r in rows:
+        s = r["result"]["score"]
+        if top is None or top - s > band_width:
+            tier, top = tier + 1, s
+        r["result"]["tier"] = tier
+
+
+def to_markdown(rows, band_width=TIE_BAND):
+    headers = ["Tier", "Asset", "Traction", "Value", "Valuation", "Catalysts", "Moat", "Evidence",
                "Weighted", "Cap", "Score", "Band", "Change"]
     lines = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
     for r in rows:
@@ -124,12 +141,13 @@ def to_markdown(rows):
         cap = "-" if s["cap"] is None else f"{s['cap']} ({', '.join(s['cap_codes'])})"
         chg = "n/a" if s["change"] is None else f"{s['change']:+.1f}"
         dims = [f"{r[d]:g}" for d in WEIGHTS]
-        lines.append("| " + " | ".join([name, *dims, f"{s['weighted']}", cap, f"**{s['score']}**",
+        lines.append("| " + " | ".join([str(s["tier"]), name, *dims, f"{s['weighted']}", cap, f"**{s['score']}**",
                                         s["band"], chg]) + " |")
     lines.append("")
     lines.append("Weights: traction 25%, value accrual 20%, valuation 20%, catalysts 15%, moat 10%, "
                  "evidence 10%. The lowest applicable cap wins. Bands: 8-10 strong, 6-7.9 promising "
-                 "with gaps, below 6 normally not a finalist.")
+                 f"with gaps, below 6 normally not a finalist. Names within {band_width} points of a tier's top "
+                 "score share the tier: treat them as tied and weight them equally.")
     notes = [f"- **{r['asset']}:** {r['note']}" for r in rows if r["note"]]
     if notes:
         lines += ["", *notes]
@@ -141,6 +159,7 @@ def main():
     p.add_argument("input", nargs="?", help="CSV or JSON file, or '-' for stdin")
     p.add_argument("--json", action="store_true", help="emit JSON instead of a markdown table")
     p.add_argument("--template", action="store_true", help="print an empty CSV header and exit")
+    p.add_argument("--tie-band", type=Decimal, default=TIE_BAND, help="points within which scores count as tied")
     args = p.parse_args()
 
     if args.template:
@@ -155,11 +174,12 @@ def main():
     for row in rows:
         row["result"] = score(row)
     rows.sort(key=lambda r: (-r["result"]["score"], -r["result"]["weighted"]))
+    assign_tiers(rows, args.tie_band)
 
     if args.json:
         print(json.dumps(rows, indent=2, default=lambda d: float(d) if isinstance(d, Decimal) else str(d)))
     else:
-        print(to_markdown(rows))
+        print(to_markdown(rows, args.tie_band))
 
 
 if __name__ == "__main__":
