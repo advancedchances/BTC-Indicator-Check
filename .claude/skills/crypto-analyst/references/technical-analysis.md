@@ -33,6 +33,12 @@ How to turn a ticker into entry and exit levels the user can check, using `scrip
 | Liquidation map, whale liquidation prices, recent liquidations | `python scripts/derivatives.py liqmap BTC` |
 | Options (put/call, max pain, OI walls, skew, DVOL, basis) | `python scripts/derivatives.py options BTC` |
 | Market backdrop (Fear & Greed, MVRV Z, dominance, stablecoins, DXY, S&P 500, 10Y) | `python scripts/derivatives.py sentiment` |
+| Stocks and ETFs | `python scripts/trade_plan.py MSTR IBIT --asset stock` |
+| TradingView indicator with the plan's levels and alerts | `python scripts/trade_plan.py BTC --pine btc.pine` |
+| Position size capped at a share of the account | `python scripts/trade_plan.py SOL --account 160000 --risk 1 --max-position 20` |
+| Plans as files for a digest or another tool | `python scripts/trade_plan.py BTC ETH --out reports/` |
+| Dashboard data files and daily alerts | `python scripts/export_dashboard.py BTC --out /tmp/btc_map` |
+| Walk-forward test of the plans (and the record file plans quote) | `python scripts/plan_backtest.py BTC ETH SOL --csv trades.csv --calibration references/plan_calibration.json` |
 
 Add `--json` to any of them for machine-readable output. All of them use closed bars for signals and print the live price separately. Set `CRYPTO_ANALYST_CACHE` to move the cache (the Hyperliquid leaderboard is 40 MB and is cached for six hours, whale positions for 15 minutes).
 
@@ -124,6 +130,17 @@ Add `--json` to any of them for machine-readable output. All of them use closed 
 - **What this means for entries.** At a support zone, wait for a daily close back above a lost level, a cloud reclaim or a 55-day-high style breakout rather than buying the first oversold print. Use oversold readings only to know where to start watching.
 
 Re-run `technicals.py backtest BTC` before quoting these; they move as history grows.
+
+### What the walk-forward says about the plans themselves (30 Oct 2026)
+
+`plan_backtest.py` replayed the plan every week on BTC, ETH and SOL from 2017 to October 2026. That is about 4,580 plans, each traded on the bars that followed with limit entries, the stop checked first, thirds at the exits and a time stop. The replay is chart-only: no funding, open interest, whale or liquidation history exists for free.
+- **Overall:** near breakeven. Most filled trades ended at the stop.
+- **Long beats short:** swing longs averaged +0.09R per filled trade, swing shorts −0.18R. Shorts were near breakeven even in bearish regimes.
+- **With the trend beats against it:** swing plans with the trend averaged +0.03R, counter-trend plans −0.14R.
+- **One kind of plan had a clear edge:** swing, long, with the trend, grade A (5–6 points). 56% of 128 filled trades won (90% floor 49%), averaging +0.31R, and it was positive in 8 of 10 years.
+- **A++ did not beat A:** 34% of 29 won. B and C showed no edge, and position plans showed none in chart-only form.
+
+`trade_plan.py` prints the matching record under every plan from `references/plan_calibration.json`. Rebuild it after changing the plan logic. With these results, treat a plan as a map of where levels agree and lean on the tested record, not the letter grade, for how much to trust it.
 
 ## 7. Breakout checklist
 

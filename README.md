@@ -142,6 +142,19 @@ python .claude/skills/crypto-analyst/scripts/derivatives.py sentiment       # ma
 
 `references/technical-analysis.md` explains how the plan is built, how to read each input, what the BTC backtests show, and a breakout checklist. Plans are conditional research: where a trade makes sense and where it is wrong. They are not instructions to trade.
 
+More tools built on the same engine:
+
+```bash
+python .claude/skills/crypto-analyst/scripts/trade_plan.py MSTR IBIT --asset stock         # stocks and ETFs (Yahoo Finance, SPY benchmark)
+python .claude/skills/crypto-analyst/scripts/trade_plan.py BTC --pine btc.pine             # TradingView Pine v6 indicator: levels + alert conditions
+python .claude/skills/crypto-analyst/scripts/trade_plan.py BTC --out reports/              # plans as .md and .json files for a digest to read
+python .claude/skills/crypto-analyst/scripts/plan_backtest.py BTC ETH SOL                  # walk-forward test of the plans since 2017
+python .claude/skills/crypto-analyst/scripts/export_dashboard.py BTC --out /tmp/btc_map    # dashboard data files + alerts.json
+python .claude/skills/crypto-analyst/scripts/journal_stats.py trades.csv                   # grade a trade journal by setup, grade, type and hold time
+```
+
+Every plan prints its **tested record**: how plans of the same kind (horizon, side, with or against the trend, grade) traded in the walk-forward test. The test replayed about 4,580 chart-only plans on BTC, ETH and SOL from 2017 to 2026. Most kinds of plan were near breakeven and shorts had no edge. Swing longs with the trend at grade A won 56% of 128 trades for +0.31R on average.
+
 ## Disclaimer
 
 This is a random project for educational purposes only. Not financial advice. Always do your own research before making any investment decisions.

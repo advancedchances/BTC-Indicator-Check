@@ -98,7 +98,7 @@ It tests each endpoint below and reports one of: `ok`; `blocked by network polic
 | alternative.me | Fear & Greed index | No | `derivatives.py sentiment` |
 | CoinMetrics community API | BTC MVRV and market cap since 2011 (realized cap derived) | No | `derivatives.py sentiment` |
 | CoinGecko `/global` | BTC and ETH dominance | No | `derivatives.py sentiment` |
-| Yahoo Finance chart API | Dollar index, S&P 500, US 10-year yield (^TNX) | No | `derivatives.py sentiment` |
+| Yahoo Finance chart API | Stock and ETF daily candles; dollar index, S&P 500, US 10-year yield (^TNX) | No | `load_candles(..., asset="stock")`, `derivatives.py sentiment` (request daily bars with period1/period2: `range=max` silently returns monthly bars; it rate-limits bursts) |
 
 Refused or keyed in the 30 Oct 2026 session (re-test; don't assume): Binance futures (geo-blocked, but its funding arrives through Hyperliquid's predicted-funding feed), Bybit (geo-blocked; same), CoinGlass API (key required: `derivatives.py liqmap` models the heatmap instead), Farside ETF flows (Cloudflare challenge: use web search for ETF flows), beaconcha.in validator queue (key required), FRED CSV downloads (timed out; Yahoo's ^TNX covers the 10-year yield).
 

@@ -12,6 +12,7 @@ Usage:
   python technicals.py backtest ETH             # every signal's track record on this coin
   python technicals.py cycle                    # BTC cycle gauges (Mayer, Pi cycle, 200W, 2Y MA, power law)
   python technicals.py seasonality BTC          # returns by calendar month
+  python technicals.py analyze MSTR --asset stock   # stocks and ETFs work too (Yahoo Finance daily bars)
   add --json to any command for machine-readable output
 
 What it computes (formulas match TradingView's built-ins; see ta_core.py):
@@ -64,6 +65,11 @@ WEEKLY_HORIZONS, WEEKLY_PRIMARY, WEEKLY_COOLDOWN = (4, 8, 13), 8, 4
 HISTORY_DAYS = 4000
 HOURLY_DAYS = 60
 PROVEN_MIN_N = 10
+NOW = None  # set to an epoch time to analyze history as of that moment (plan_backtest.py does)
+
+
+def now():
+    return NOW if NOW is not None else time.time()
 
 # Confluence weights: how much a level counts when it agrees with others.
 W = {
@@ -89,7 +95,9 @@ def closed(series, rule):
     """Drop the last bar when its period hasn't ended (rule: '1d', 'W', 'M', 'Q', 'Y', '3D', '4H')."""
     if not series["t"]:
         return series
-    t, now = series["t"][-1], time.time()
+    if rule == "1d" and "forming_last" in series:  # stocks: Yahoo says whether the session is still open
+        return T.slice_series(series, 0, -1) if series["forming_last"] and NOW is None else series
+    t, now_ = series["t"][-1], now()
     if rule == "1d":
         end = t + 86400
     elif rule.endswith("H"):
@@ -107,18 +115,19 @@ def closed(series, rule):
             end = int(dt.datetime(d.year + (m - 1) // 12, (m - 1) % 12 + 1, 1, tzinfo=dt.timezone.utc).timestamp())
         else:
             end = int(dt.datetime(d.year + 1, 1, 1, tzinfo=dt.timezone.utc).timestamp())
-    return T.slice_series(series, 0, -1) if end > now else series
+    return T.slice_series(series, 0, -1) if end > now_ else series
 
 
-def load(symbol, days=HISTORY_DAYS, hourly=True):
-    d, src = load_candles(symbol, "1d", days)
+def load(symbol, days=HISTORY_DAYS, hourly=True, asset=None):
+    d, src = load_candles(symbol, "1d", days, asset=asset)
+    kind = "stock" if src == "Yahoo Finance" else "crypto"
     h = None
-    if hourly:
+    if hourly and kind == "crypto":  # stock hours make 4-hour bars meaningless
         try:
             h, _ = load_candles(symbol, "1h", HOURLY_DAYS)
         except FetchError:
             h = None
-    return {"symbol": symbol.upper(), "source": src, "daily": d, "hourly": h,
+    return {"symbol": symbol.upper(), "source": src, "daily": d, "hourly": h, "asset": kind,
             "live": d["c"][-1], "live_t": d["t"][-1], "forming": forming(d)}
 
 
@@ -665,7 +674,7 @@ def cycle_gauges(dc, wc, live):
     a = my - b * mx
     res = [y - (a + b * x) for x, y in zip(xs, ys)]
     sd = math.sqrt(sum(r * r for r in res) / nx)
-    x_now = math.log10((time.time() - genesis) / 86400)
+    x_now = math.log10((now() - genesis) / 86400)
     fair = 10 ** (a + b * x_now)
     z_now = (math.log10(live) - (a + b * x_now)) / sd
     halving = dt.datetime(2024, 4, 20, tzinfo=dt.timezone.utc)
@@ -678,7 +687,7 @@ def cycle_gauges(dc, wc, live):
         "200w_sma": w200[-1], "price_vs_200w": live / w200[-1] if w200[-1] else None,
         "ath": dc["h"][ath_i], "ath_date": T.utc(dc["t"][ath_i]).strftime("%Y-%m-%d"),
         "drawdown_from_ath": live / dc["h"][ath_i] - 1,
-        "days_since_halving": (dt.datetime.now(dt.timezone.utc) - halving).days,
+        "days_since_halving": int((now() - halving.timestamp()) // 86400),
         "power_law": {"fair_value": fair, "band_minus_1sd": fair * 10 ** -sd, "band_plus_1sd": fair * 10 ** sd,
                       "band_plus_2sd": fair * 10 ** (2 * sd), "z": z_now, "slope": b,
                       "fit_from": T.utc(dc["t"][0]).strftime("%Y-%m-%d")},
@@ -804,15 +813,20 @@ def setups(a):
 
 # ---------------------------------------------------------------- analysis
 
-def analyze(symbol, with_derivs=False, bench=None):
-    data = load(symbol)
+def analyze(symbol, with_derivs=False, bench=None, data=None, asset=None):
+    """Full analysis. `data` (the dict load() returns) skips fetching, e.g. for a history slice.
+    asset: "crypto", "stock" or None to detect (Yahoo Finance as the source means a stock)."""
+    data = data or load(symbol, asset=asset)
+    kind = data.get("asset") or ("stock" if data.get("source") == "Yahoo Finance" else "crypto")
+    if kind == "stock":
+        with_derivs = False  # no perps, funding or liquidation data for stocks
     d = data["daily"]
     live = data["live"]
     dc = closed(d, "1d")
     wk = T.resample(d, "W")
     wc, mc, d3 = closed(wk, "W"), closed(T.resample(d, "M"), "M"), closed(T.resample(d, "3D"), "3D")
-    a = {"symbol": data["symbol"], "source": data["source"], "live": live,
-         "as_of": T.utc(time.time()).strftime("%Y-%m-%d %H:%M UTC"),
+    a = {"symbol": data["symbol"], "source": data["source"], "live": live, "asset": kind,
+         "as_of": T.utc(now()).strftime("%Y-%m-%d %H:%M UTC"),
          "history_from": T.utc(d["t"][0]).strftime("%Y-%m-%d"), "daily_bars": len(dc["c"])}
     a["change"] = {k: live / dc["c"][-n] - 1 if len(dc["c"]) >= n else None for k, n in (("1d", 1), ("7d", 7), ("30d", 30), ("90d", 90))}
     tf = {}
@@ -867,7 +881,7 @@ def analyze(symbol, with_derivs=False, bench=None):
     a["score"] = score(a)
     a["setups"] = setups(a)
     bd = bw = None
-    if bench is not None and bench["symbol"] != a["symbol"]:
+    if bench is not None and bench["symbol"] != a["symbol"] and kind == "crypto":
         bd, bw = bench["dc"], bench["wc"]
     bt = backtest(dc, wc, bd, bw)
     a["signals_now"] = [s for s in bt if s["active"]]
@@ -1056,7 +1070,7 @@ def render_scan(rows):
 
 
 def bench_series():
-    d, _ = load_candles("BTC", "1d", HISTORY_DAYS)
+    d, _ = load_candles("BTC", "1d", HISTORY_DAYS, asset="crypto")
     dc = closed(d, "1d")
     return {"symbol": "BTC", "dc": dc, "wc": closed(T.resample(d, "W"), "W")}
 
@@ -1080,6 +1094,8 @@ def main():
     for name in ("analyze", "scan", "levels", "backtest", "seasonality"):
         sp = sub.add_parser(name)
         sp.add_argument("symbols", nargs="+")
+        sp.add_argument("--asset", choices=["crypto", "stock"], help="force the asset type (default: crypto venues "
+                        "first, then Yahoo Finance for stocks and ETFs)")
         if name in ("analyze", "levels"):
             sp.add_argument("--derivs", action="store_true", help="add funding, OI, whale positions and liquidation map")
     sub.add_parser("cycle", help="BTC cycle gauges")
@@ -1087,7 +1103,7 @@ def main():
     args = p.parse_args()
 
     if args.cmd == "cycle":
-        d, src = load_candles("BTC", "1d", HISTORY_DAYS)
+        d, src = load_candles("BTC", "1d", HISTORY_DAYS, asset="crypto")
         live = d["c"][-1]
         dc, wc = closed(d, "1d"), closed(T.resample(d, "W"), "W")
         g = cycle_gauges(dc, wc, live)
@@ -1117,10 +1133,10 @@ def main():
     for sym in args.symbols:
         try:
             if args.cmd == "seasonality":
-                d, src = load_candles(sym, "1d", HISTORY_DAYS)
+                d, src = load_candles(sym, "1d", HISTORY_DAYS, asset=args.asset)
                 results.append({"symbol": sym.upper(), "source": src, **seasonality(d, d["c"][-1])})
                 continue
-            a = analyze(sym, with_derivs=getattr(args, "derivs", False), bench=bench)
+            a = analyze(sym, with_derivs=getattr(args, "derivs", False), bench=bench, asset=args.asset)
             results.append(a)
         except FetchError as e:
             errors.append(f"{sym.upper()}: {e}")
