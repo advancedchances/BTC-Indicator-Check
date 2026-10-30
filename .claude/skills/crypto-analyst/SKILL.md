@@ -1,6 +1,6 @@
 ---
 name: crypto-analyst
-description: Evidence-first crypto research analyst that hunts for mispriced tokens using fundamentals, on-chain data, tokenomics, market structure and venture-style due diligence, then actively tries to disprove its own thesis. Use this skill whenever the user wants undervalued, asymmetric or overlooked crypto or altcoin opportunities, asks what to research or accumulate in crypto right now, wants a crypto market regime or sector-rotation read, or asks for due diligence, a deep dive, a bull/bear case, tokenomics or unlock analysis, or valuation work (FDV, MC/revenue, MC/TVL, fees) on any token or protocol, or asks to update, re-check or grade an earlier crypto scan, even if they never say "research" or "analyst". Not for placing trades or for pure technical-indicator signal checks.
+description: Evidence-first crypto research analyst that hunts for mispriced tokens using fundamentals, on-chain data, tokenomics, market structure and venture-style due diligence, then actively tries to disprove its own thesis. Use this skill whenever the user wants undervalued, asymmetric or overlooked crypto or altcoin opportunities, asks what to research or accumulate in crypto right now, wants a crypto market regime or sector-rotation read, or asks for due diligence, a deep dive, a bull/bear case, tokenomics or unlock analysis, or valuation work (FDV, MC/revenue, MC/TVL, fees) on any token or protocol, or asks to update, re-check or grade an earlier crypto scan, or wants entry and exit levels, a trade plan, support and resistance, technical analysis (RSI, MACD, pivots, yearly opens, Ichimoku), funding rates, open interest, whale positioning or a liquidation map for a ticker, even if they never say "research" or "analyst". Not for placing trades.
 ---
 
 # Crypto Analyst
@@ -17,6 +17,7 @@ In crypto research, the edge comes from discipline, not optimism. Most of what c
 | "Analyze X", "Is X undervalued?", "X vs Y?" | **Due diligence** | Give brief regime context (a short Step 1), then run Steps 4–8 on the named assets. Keep the competitors, the bear case and the self-challenge |
 | A narrow factual question ("When is the next big ARB unlock?") | **Quick answer** | Answer directly with a sourced, dated figure. Skip the pipeline |
 | "Update the scan", "How did your picks do?", "Make this better" after an earlier report | **Follow-up** | Re-check the earlier calls first (see "Follow-up mode" below), then refresh Steps 1 and 4–8 for the finalists and near-misses |
+| "Where should I buy BTC?", "Levels for HYPE", "Entry and exit for SOL", "Technical read on ETH", "Funding and liquidations on X" | **Entry/exit plan** | Run `scripts/trade_plan.py <TICKER>` and follow "Entry/exit plan mode" below. Add fundamentals (Steps 4–7) only if the user asks whether the asset is worth owning |
 
 ## Ground rules for data
 
@@ -25,7 +26,7 @@ Prices, supplies, revenue and unlock schedules change every day, and your traini
 - Get every market figure from a live source during this session and note its date (UTC). Never quote a price, market cap, TVL or revenue figure from memory.
 - If you have no browsing or data tools, say so up front. Label any figure you use as "last known, as of <date>" and keep the analysis qualitative instead of inventing precision.
 - **Re-test your sources at the start of every session.** Run `python scripts/market_data.py check` before gathering any data. It reports which sources this session can reach, and it tells apart a block by the session's network policy (never route around one), a refusal by the site itself (often a missing User-Agent or API key), a rate limit and a timeout. A block or rate limit seen in an earlier session, or noted in an earlier report, says nothing about this one, so never carry it forward untested.
-- Use whatever tools you have: `scripts/market_data.py` (Coinbase prices and candles, DefiLlama fees and revenue, CoinGecko market caps through DefiLlama, all without API keys), web search and fetch, connected market-data or exchange tools, block explorers and dashboards. `references/data-sources.md` lists where to find each metric and how far to trust each kind of source.
+- Use whatever tools you have: `scripts/market_data.py` (Coinbase prices and candles with Binance, Hyperliquid and Kraken fallbacks, DefiLlama fees and revenue, CoinGecko market caps through DefiLlama, all without API keys), `scripts/technicals.py` and `scripts/derivatives.py` (chart, funding, open interest, whales, liquidation map, options, backdrop), web search and fetch, connected market-data or exchange tools, block explorers and dashboards. `references/data-sources.md` lists where to find each metric and how far to trust each kind of source.
 - Social-media volume, sentiment scores and influencer mentions measure *attention*, not value. They can help answer "is this trade crowded?", but they never count as evidence of fundamental value.
 - **Thin venues need a second source.** An exchange quote with little volume (say under ~$100k a day, or no trades for a day) can be stale. Cross-check it against another source before using it, and flag any price that has only one.
 - **Blocked sources:** if the check shows a source blocked in this session, say which and use the next source in `references/data-sources.md`. Never route around a network policy, and label figures you could only get secondhand.
@@ -49,7 +50,9 @@ Before you look at any single asset, work out the backdrop. The same token can b
 
 End with a regime call, such as risk-on with expanding liquidity, risk-off, or range-bound chop, and whether the market is BTC-led or rotating into alts. Then list the sectors that look **crowded** (rich valuations relative to fundamentals, heavy leverage, heavy discussion) and those that look **overlooked** (improving fundamentals, little attention). Cite the evidence for each call.
 
-If you're working inside the BTC-Indicator-Check repo, its notebook computes BTC RSI, MACD, Bollinger Bands and the 200-week SMA. Those readings are one useful input to the BTC trend read, but here technicals are context, not a thesis.
+Pull the backdrop with `python scripts/derivatives.py sentiment` (Fear & Greed, MVRV Z-score, dominance, stablecoin supply, the dollar, the S&P 500, the 10-year yield, and a risk-on/off gate) and the trend with `python scripts/technicals.py scan BTC ETH` and `technicals.py cycle`. In a scan, technicals are context, not a thesis.
+
+**Ask "alts at all?" before picking alts.** In the 25 Sep 2026 scan the finalists' median return (−4.8%) trailed BTC's (−3.6%); the edge came from avoiding the names that were cut, not from beating BTC. So compare every alt idea with simply holding BTC. When the gate reads risk-off (score −2 or lower) and BTC is below its 21-week EMA, lead the report with what to avoid, keep any alt list short, and say plainly that holding BTC or cash has been the better default in that backdrop.
 
 ### Step 2 — Build a broad candidate set
 
@@ -122,7 +125,7 @@ For each finalist, write **thesis invalidation conditions**: specific triggers a
 
 Give each finalist a Research Score from 1 to 10 using the rubric in `references/report-template.md`. It covers organic traction, value accrual, relative valuation, catalysts, competitive position, evidence quality, and caps for severe risks. The score measures how strong and well-supported the asymmetric case is. It is not a price target or a buy signal. Rank the finalists by score.
 
-Put the six ratings for every finalist in a CSV and run `scripts/research_score.py`, which applies the weights and caps the same way every time and prints the full breakdown. Show that breakdown for every finalist, not just the top one, so a later follow-up can say exactly what moved. Apply a cap whenever its condition holds, even when you suspect the risk is overstated: say why in the note, and don't skip the cap.
+Put the six ratings for every finalist in a CSV and run `scripts/research_score.py`, which applies the weights and caps the same way every time and prints the full breakdown. It also groups scores within 0.7 points into tiers: correcting inputs moved scores by 0.7 on average in the October follow-up, more than the gap between most finalists, so rank by tier and treat names in one tier as tied. Show that breakdown for every finalist, not just the top one, so a later follow-up can say exactly what moved. Apply a cap whenever its condition holds, even when you suspect the risk is overstated: say why in the note, and don't skip the cap.
 
 ### Step 8 — Challenge your own conclusions
 
@@ -143,11 +146,22 @@ Revise scores or cut names if the answers call for it. Your honest answers becom
 When the user comes back to an earlier scan, grade it before you extend it. A follow-up that only adds new names hides whether the method works.
 
 1. **Re-price every name from the last report** (finalists, watchlist and every eliminated name, not a sample) at the same venue, with a second source for thin ones. Use the price at the hour the earlier report was written as the base: `market_data.py candles <SYMBOL> --start <date>T<hour>:00 --end <date>T<hour+1>:00 --granularity 3600` gives it on Coinbase. Check it against the prices the earlier report quoted.
-2. **Score the calls.** Put the names in a CSV and run `scripts/call_scorecard.py`. It reports each name's return against BTC and each group as an equal-weight basket. Say how many days the window covers. A few weeks of returns is noise, so treat it as a check on direction, not as proof.
+2. **Score the calls.** Start from the calls ledger the earlier report saved (see Output). Run `scripts/call_scorecard.py calls.csv --fetch` to fill current prices, and `--by reason` to grade each elimination rule separately. It reports each name's return against BTC, and each group's equal-weight mean, median, mean without its best name, and hit rate. Say how many days the window covers. Before the horizon set at report time, grade the evidence and catalysts, not the price: a few weeks of returns is noise.
 3. **Walk each invalidation condition and catalyst.** Did any trigger? Did a dated catalyst happen, and did the price respond?
 4. **Diff the evidence.** Sort what you find into *new*, *gap closed*, *still open*, *contradicts* (credible evidence against the thesis) and *correction* (something you missed or got wrong last time, including anything public before the earlier report). Corrections matter most: they show where the process leaks.
 5. **Rescore with the full breakdown** and show the change from the earlier score with the reason. Apply caps you should have applied last time, and say so.
 6. **Report** a call scorecard and a "Changes since last report" section before the finalist sections (see `references/report-template.md`).
+
+## Entry/exit plan mode
+
+When the user gives a ticker and wants to know where to get in or out, read `references/technical-analysis.md`, then:
+
+1. Run `python scripts/trade_plan.py <TICKER>`. Use `--horizon both` for BTC, ETH or anything the user holds as a core position (a swing plan for days to weeks and a position plan for weeks to months), `--side long` when they only want entries, and `--account` and `--risk` when they want a size.
+2. Check the triggers against the record: `python scripts/technicals.py backtest <TICKER>` shows which signals have actually worked on this coin. At an entry zone, recommend waiting for a trigger with a positive record rather than the first touch.
+3. Present it as `references/technical-analysis.md` section 8 describes. Lead with the bias, grade and plan table (entries with what's there, stop, exits with reward/risk, the alternative breakout entry). Then give the readings that matter most, what to wait for, and what makes the plan wrong. Name the weekly or monthly closes that matter in the next few days.
+4. If the user has written rules or exit levels (a trade journal, a thesis file, a signal system), check the plan against them in the conversation. Flag where a planned trade would break a rule they wrote.
+
+A plan is conditional research: where a trade makes sense, where it is wrong, and what the evidence says. It is never an instruction to buy or sell, and a C grade stays a C however good the story sounds.
 
 ## Output
 
@@ -160,6 +174,8 @@ Follow the full template in `references/report-template.md`. The sections, in or
 5. **WHAT COULD I BE WRONG ABOUT?**: always the final analytical section. It covers the weakest assumptions, the evidence against each thesis, and what would change your mind.
 
 Close with the data timestamp and a one-line note that this is research, not financial advice.
+
+**Save a calls ledger with every scan.** Write `calls-<YYYY-MM-DD>.csv` with the columns from `python scripts/call_scorecard.py --template`. It has one row per name (finalists, watchlist, every eliminated name, plus BTC as the benchmark), with the group, a short reason code for eliminated names (UNLOCK_OR_FLOAT, NO_HOLDER_REVENUE, POW_NO_CASHFLOW, WEAK_ACCRUAL_OR_RICH, or another code you define), the base price with its source and UTC time, and the grading horizon (90 days unless the thesis needs longer). Commit it next to the report when you're working in a repo, or give it to the user. Each follow-up is then one command, and ledgers across scans build a track record that can tell skill from luck.
 
 In due-diligence mode, use the same per-finalist structure for each named asset with a shorter market overview. Say plainly whether each asset would have survived the elimination screen, and still end with "WHAT COULD I BE WRONG ABOUT?".
 

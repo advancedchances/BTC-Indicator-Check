@@ -102,6 +102,46 @@ python .claude/skills/crypto-analyst/scripts/market_data.py mcaps aave sky      
 
 Ask *"update the scan"* or *"how did your picks do?"* after a report and the skill runs in follow-up mode: it re-prices the earlier calls, scores them against BTC, sorts new evidence into new / closed / open / contradicting / corrections, and rescores with the full breakdown.
 
+### Entry and exit plans for any ticker
+
+Give it a ticker and `trade_plan.py` returns entry zones, a stop, three exits with reward/risk, an alternative breakout entry, and a setup grade (A++/A/B/C). It also prints a row in trade-journal columns.
+
+```bash
+python .claude/skills/crypto-analyst/scripts/trade_plan.py BTC --horizon both --side long   # swing and position entries for BTC
+python .claude/skills/crypto-analyst/scripts/trade_plan.py HYPE                             # long and short plans with all evidence
+python .claude/skills/crypto-analyst/scripts/trade_plan.py ETH SOL ZEC --brief              # plan blocks only
+python .claude/skills/crypto-analyst/scripts/trade_plan.py SOL --account 160000 --risk 1    # add a position size for 1% risk
+```
+
+Every level in a plan traces to a reading printed beside it. Two engines supply them, both standard library only and free of API keys:
+
+- `technicals.py` is the chart engine. It uses TradingView's formulas and computes:
+  - RSI, Stoch RSI and divergences on 4H, daily, 3D, weekly and monthly bars, and MACD on the same timeframes except 3D;
+  - yearly, quarterly, monthly and weekly opens, and the prior year's close, high and low;
+  - classic, Fibonacci and Camarilla pivots for each period;
+  - the 20/50/100/200-day, 20/21/50/200-week and 2-year averages;
+  - Ichimoku (default and crypto presets), Bollinger squeeze, anchored VWAPs and volume profile;
+  - a confluence map of levels that agree, and a backtest of every signal firing now on that coin's own history.
+
+  It also prints BTC cycle gauges (Mayer, Pi cycle, 200W, power law) and returns by calendar month.
+- `derivatives.py` covers positioning and the backdrop:
+  - funding on eight venues;
+  - open interest history and long/short ratios;
+  - live positions and liquidation prices of the top Hyperliquid traders;
+  - a modeled liquidation map;
+  - Deribit options (max pain, open-interest walls, skew, DVOL, basis);
+  - order-book walls and the Coinbase premium;
+  - the market backdrop: Fear & Greed, MVRV Z-score, dominance, stablecoins, the dollar, the S&P 500 and the 10-year yield.
+
+```bash
+python .claude/skills/crypto-analyst/scripts/technicals.py analyze BTC      # full technical dossier
+python .claude/skills/crypto-analyst/scripts/technicals.py backtest ETH     # which signals have worked on ETH
+python .claude/skills/crypto-analyst/scripts/derivatives.py liqmap BTC      # liquidation map and whale liquidation prices
+python .claude/skills/crypto-analyst/scripts/derivatives.py sentiment       # market backdrop and risk gate
+```
+
+`references/technical-analysis.md` explains how the plan is built, how to read each input, what the BTC backtests show, and a breakout checklist. Plans are conditional research: where a trade makes sense and where it is wrong. They are not instructions to trade.
+
 ## Disclaimer
 
 This is a random project for educational purposes only. Not financial advice. Always do your own research before making any investment decisions.
