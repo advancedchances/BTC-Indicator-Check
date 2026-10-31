@@ -8,6 +8,7 @@ can reach. Standard library only.
   python trade_plan.py ZEC --side short      # force the short-side plan
   python trade_plan.py SOL --account 160000 --risk 1   # add position size for 1% account risk
   python trade_plan.py SOL --account 160000 --risk 1 --max-position 20   # ...capped at 20% of the account
+  python trade_plan.py SOL --account 160000 --risk 1 --vol-target 20     # ...and at 20% volatility of the account
   python trade_plan.py BTC ETH --out reports/  # also write <SYMBOL>_<horizon>.md and .json for a digest to read
   python trade_plan.py HYPE --no-derivs      # chart-only (faster; no funding, whales or liquidation map)
   python trade_plan.py HYPE --full           # plan + the full technical dossier underneath
@@ -44,6 +45,7 @@ sense and where it is wrong, and leaves the decision and sizing to you.
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -73,7 +75,8 @@ def horizon_atr(a, horizon):
 
 
 def tested_record(p):
-    """The walk-forward record of plans of the same kind (horizon, side, with/against trend, grade), if any."""
+    """The walk-forward record of plans of the same kind (horizon, side, with/against trend, grade), if any,
+    with the later period's record on its own when the calibration has one."""
     try:
         with open(CALIBRATION_PATH) as fh:
             cal = json.load(fh)
@@ -83,7 +86,23 @@ def tested_record(p):
     c = cal.get("cells", {}).get(key)
     if not c:
         return None
-    return dict(c, key=key, period=f"{cal['from'][:4]}-{cal['to'][:4]}", symbols=", ".join(cal["symbols"]))
+    out = dict(c, key=key, period=f"{cal['from'][:4]}-{cal['to'][:4]}", symbols=", ".join(cal["symbols"]),
+               costs=cal.get("costs_bps"))
+    late = cal.get("holdout_cells", {}).get(key)
+    if late and cal.get("holdout_from"):
+        out["later"] = dict(late, since=cal["holdout_from"][:4])
+    return out
+
+
+def kelly(rec):
+    """Kelly risk per trade from a tested record: f = E[R] / E[R^2] (the growth-optimal share of equity to
+    lose at -1R), on the average edge and on its 90% floor. Estimated edges are noisy, so quote a quarter."""
+    if not rec or not rec.get("r2") or rec.get("avg_r") is None:
+        return None
+    full = max(0.0, rec["avg_r"]) / rec["r2"]
+    floor = rec.get("avg_r_floor")
+    return {"full": full, "quarter": full / 4,
+            "on_floor": max(0.0, floor) / rec["r2"] / 4 if floor is not None else None}
 
 
 def swing_zones(a, horizon="swing"):
@@ -366,7 +385,7 @@ def stock_bench_ctx():
 
 
 def plan(sym, derivs=True, side=None, backdrop=None, btc=None, account=None, risk_pct=None, horizon="swing",
-         analysis=None, asset=None, max_position=None):
+         analysis=None, asset=None, max_position=None, vol_target=None):
     """Build the plan. Pass `analysis` (from technicals.analyze) to reuse one analysis for several horizons.
     asset: "crypto", "stock" or None to detect; stocks use SPY as the benchmark and skip derivatives."""
     a = analysis if analysis is not None else TA.analyze(sym, with_derivs=derivs, bench=btc["bench"] if btc else None,
@@ -391,23 +410,105 @@ def plan(sym, derivs=True, side=None, backdrop=None, btc=None, account=None, ris
         sides[s] = build_side(a, zones, s, total, ev, horizon)
         if sides[s]:
             sides[s]["record"] = tested_record(sides[s])
-    # Neutral evidence leads with the long side: in the walk-forward, shorts were near breakeven in every regime.
+    # Neutral evidence leads with the long side: in the walk-forward, short plans lost money after costs.
     primary = side or ("short" if total < -0.5 and sides["short"] else "long" if sides["long"] else "short")
     out = {"symbol": a["symbol"], "as_of": a["as_of"], "live": a["live"], "source": a["source"], "bias": bias,
            "bias_score": total, "evidence": [{"family": k, "vote": v, "reading": r} for k, v, r in ev],
            "primary": primary, "plans": sides, "zones": zones, "zone_tolerance": tol, "analysis": a,
            "atr": horizon_atr(a, horizon), "horizon": horizon, "cycle": cycle}
     p = sides.get(primary)
-    if p and account and risk_pct:
-        risk_usd = account * risk_pct / 100
-        units = risk_usd / abs(p["avg_entry"] - p["stop"])
-        capped = False
-        if max_position and units * p["avg_entry"] > account * max_position / 100:
-            units, capped = account * max_position / 100 / p["avg_entry"], True
-        out["sizing"] = {"account": account, "risk_pct": risk_pct, "risk_usd": units * abs(p["avg_entry"] - p["stop"]),
-                         "units": units, "notional": units * p["avg_entry"], "pct_of_account": units * p["avg_entry"] / account,
-                         "capped": capped, "max_position": max_position}
+    if p and account and (risk_pct or vol_target):
+        out["sizing"] = size_position(p, a, account, risk_pct, max_position, vol_target)
     return out
+
+
+def realized_vol(a, n=30):
+    """Annualized volatility of the last n closed daily bars."""
+    c = a["_series"]["dc"]["c"]
+    v = TA.T.rolling_vol(c, n, 252 if a.get("asset") == "stock" else 365)
+    return v[-1] if v else None
+
+
+def size_position(p, a, account, risk_pct=None, max_position=None, vol_target=None):
+    """Units for the plan: the smallest of the stop-risk size (risk_pct of the account lost at the stop), the
+    volatility-target size (the position's annualized volatility at most vol_target percent of the account)
+    and the position cap (max_position percent of the account)."""
+    price, per_unit = p["avg_entry"], abs(p["avg_entry"] - p["stop"])
+    vol = realized_vol(a)
+    limits = {}
+    if risk_pct:
+        limits["stop risk"] = account * risk_pct / 100 / per_unit
+    if vol_target and vol:
+        limits["volatility target"] = account * vol_target / 100 / vol / price
+    if max_position:
+        limits["position cap"] = account * max_position / 100 / price
+    if not limits:
+        return None
+    bound = min(limits, key=limits.get)
+    units = limits[bound]
+    rec = p.get("record")
+    return {"account": account, "risk_pct": risk_pct, "vol_target": vol_target, "max_position": max_position,
+            "units": units, "notional": units * price, "pct_of_account": units * price / account,
+            "risk_usd": units * per_unit, "bound_by": bound, "limits": limits, "realized_vol": vol,
+            "kelly": kelly(rec) if rec and rec.get("fills", 0) >= MIN_TESTED else None}
+
+
+def portfolio_check(outs, days=90):
+    """How much the planned coins move together, and what that does to the plans' combined risk."""
+    seen = {}
+    for o in outs:
+        if o["symbol"] not in seen and o["plans"].get(o["primary"]):
+            seen[o["symbol"]] = o
+    if len(seen) < 2:
+        return None
+    rets = {}
+    for sym, o in seen.items():
+        dc = o["analysis"]["_series"]["dc"]
+        rets[sym] = {t: math.log(c / q) for t, c, q in zip(dc["t"][1:], dc["c"][1:], dc["c"][:-1]) if c > 0 and q > 0}
+    common = sorted(set.intersection(*[set(r) for r in rets.values()]))[-days:]
+    syms = list(seen)
+    corr = {}
+    for i, x in enumerate(syms):
+        for y in syms[i + 1:]:
+            corr[(x, y)] = TA.T.correlation([rets[x][t] for t in common], [rets[y][t] for t in common])
+    vals = [v for v in corr.values() if v is not None]
+    if not vals:
+        return None
+    rho, n = sum(vals) / len(vals), len(syms)
+    out = {"days": len(common), "pairs": {f"{x}/{y}": v for (x, y), v in corr.items()}, "avg_corr": rho,
+           "effective_bets": n / (1 + (n - 1) * rho) if 1 + (n - 1) * rho > 0 else float(n), "coins": n}
+    risk = {}
+    for sym, o in seen.items():
+        if o.get("sizing"):
+            risk[sym] = o["sizing"]["risk_usd"] * (1 if o["plans"][o["primary"]]["side"] == "long" else -1)
+    if len(risk) == n:
+        tot = sum(risk[x] * risk[y] * (1.0 if x == y else corr.get((x, y), corr.get((y, x))) or 0.0)
+                  for x in syms for y in syms)
+        acct = next(iter(seen.values()))["sizing"]["account"]
+        out.update({"nominal_risk": sum(abs(v) for v in risk.values()), "combined_risk": math.sqrt(max(tot, 0.0)),
+                    "account": acct, "mixed_sides": len({v > 0 for v in risk.values()}) > 1})
+    return out
+
+
+def render_portfolio(pc_):
+    L = [f"## Portfolio check: {pc_['coins']} plans together",
+         f"Average correlation of daily returns over the last {pc_['days']} days: {pc_['avg_corr']:.2f} ("
+         + ", ".join(f"{k} {v:.2f}" for k, v in pc_["pairs"].items() if v is not None)
+         + f"). Equal-risk plans on the same side of these coins behave like {pc_['effective_bets']:.1f} independent "
+           f"bets, not {pc_['coins']}."]
+    if pc_.get("nominal_risk"):
+        a = pc_["account"]
+        nom = f"{f(pc_['nominal_risk'])} ({pc(pc_['nominal_risk'] / a).lstrip('+')} of the account)"
+        comb = f"{f(pc_['combined_risk'])} ({pc(pc_['combined_risk'] / a).lstrip('+')})"
+        if pc_.get("mixed_sides"):
+            L.append(f"The plans point both ways, so they partly offset: correlation-weighted they carry the risk of one "
+                     f"position risking about {comb}, against {nom} if each stop were hit on its own. A long-short mix "
+                     "loses when the coins diverge, not when the market moves as one; check that is the bet you want.")
+        else:
+            L.append(f"If every stop hits together: {nom}. Correlation-weighted, the plans carry the risk of one position "
+                     f"risking about {comb}. Crypto correlations jump toward 1 in sell-offs, so budget for the first number "
+                     "and treat the group as one trade.")
+    return "\n".join(L)
 
 
 # ---------------------------------------------------------------- rendering
@@ -426,17 +527,34 @@ def record_line(p):
         return f"Tested record ({kind}): none yet; run plan_backtest.py to build one."
     if rec["fills"] < MIN_TESTED:
         return f"Tested record ({kind}): only {rec['fills']} filled trades in testing, too few to quote."
-    verdict = "an edge in testing" if rec["avg_r"] >= 0.1 and rec["win_floor"] >= 0.45 else "no clear edge in testing"
+    floor = rec.get("avg_r_floor")
+    if rec["avg_r"] >= 0.1 and floor is not None and floor > 0:
+        verdict = "an edge in testing"
+    elif rec["avg_r"] >= 0.1:
+        verdict = "positive in testing, but the 90% floor of the average doesn't rule out no edge"
+    elif floor is not None and rec["avg_r"] < 0 and floor < -0.15 and rec["avg_r"] < -0.1:
+        verdict = "lost money in testing"
+    else:
+        verdict = "no clear edge in testing"
+    costs = rec.get("costs") or {}
+    cost_txt = f"after {costs['fee']:g} bps fees and {costs['slip']:g} bps slippage" if costs else "no fees"
+    gross = f" ({rec['avg_r_gross']:+.2f}R before costs)" if rec.get("avg_r_gross") is not None else ""
+    later = ""
+    lt = rec.get("later")
+    if lt and lt.get("fills", 0) >= 10:
+        later = (f" From {lt['since']} alone: {lt['win_rate'] * 100:.0f}% of {lt['fills']} won, "
+                 f"{lt['avg_r']:+.2f}R.")
+    floor_txt = f", 90% floor {floor:+.2f}R" if floor is not None else ""
     return (f"Tested record ({kind}): {rec['win_rate'] * 100:.0f}% of {rec['fills']} filled trades won, average "
-            f"{rec['avg_r']:+.2f}R, {rec['r_per_plan']:+.2f}R per plan counting unfilled ones: {verdict} "
-            f"({rec['symbols']} weekly, {rec['period']}, chart-only, no fees).")
+            f"{rec['avg_r']:+.2f}R{gross}{floor_txt}, {rec['r_per_plan']:+.2f}R per plan counting unfilled ones: "
+            f"{verdict} ({rec['symbols']} weekly, {rec['period']}, chart-only, {cost_txt}).{later}")
 
 
 def render_side(p, live, title):
     L = [f"**{title}** · setup grade **{p['grade']}** ({'; '.join(p['grade_why'])})", "", record_line(p)]
     if p["side"] == "short":
-        L.append("Short plans tested near breakeven in every regime: use these levels to reduce or exit a holding "
-                 "unless you have a separate reason to short.")
+        L.append("Short plans lost money after costs in the walk-forward test: use these levels to reduce or exit a "
+                 "holding unless you have a separate reason to short.")
     L += ["", "| Step | Price | From live | Reward/risk | Why this level |", "|---|---|---|---|---|"]
     e1 = p["entry_1"]
     share = "50%" if p["entry_2"] else "100%"
@@ -469,6 +587,39 @@ def render_side(p, live, title):
         L.append("\nCounter-trend: wait for a trigger in the zone (daily MACD crossing up, RSI back above 30, or a reclaimed "
                  "level) and use smaller size." if p["side"] == "long" else
                  "\nCounter-trend: wait for rejection in the zone (daily MACD crossing down or a lost level) and use smaller size.")
+    return L
+
+
+def render_sizing(s):
+    acct = s["account"]
+    asked = []
+    if s["risk_pct"]:
+        asked.append(f"{s['risk_pct']:g}% risk at the stop")
+    if s["vol_target"]:
+        asked.append(f"a {s['vol_target']:g}% volatility target")
+    if s["max_position"]:
+        asked.append(f"a {s['max_position']:g}% position cap")
+    L = [f"Size on {f(acct)} ({', '.join(asked)}): {s['units']:,.4g} units, {f(s['notional'])} notional "
+         f"({pc(s['pct_of_account']).lstrip('+')} of the account; above 100% means leverage). The stop risks "
+         f"{f(s['risk_usd'])} ({pc(s['risk_usd'] / acct).lstrip('+')} of the account)"
+         + (f"; the {s['bound_by']} is the binding limit." if len(s["limits"]) > 1 else ".")]
+    if s["vol_target"] and s["realized_vol"]:
+        L.append(f"30-day volatility is {s['realized_vol'] * 100:.0f}% a year, so a {s['vol_target']:g}% target allows at most "
+                 f"{s['vol_target'] / s['realized_vol']:.0f}% of the account in this position.")
+    k = s.get("kelly")
+    if k and not k["full"]:
+        L.append("Kelly on this kind of plan's record: no positive edge after costs, so Kelly gives no size. Trade it "
+                 "small or not at all.")
+    elif k:
+        on_floor = k["on_floor"]
+        txt = (f"Kelly on this kind of plan's record: quarter-Kelly risk is {k['quarter'] * 100:.1f}% per trade on the "
+               f"average edge")
+        if on_floor is not None:
+            txt += (f" and {on_floor * 100:.1f}% on its 90% floor" if on_floor > 0 else
+                    ", but zero on its 90% floor: the record doesn't rule out no edge, so don't size above your baseline")
+        if s["risk_pct"] and k["quarter"] and s["risk_pct"] / 100 > k["quarter"]:
+            txt += f". {s['risk_pct']:g}% risk is above even the average-edge quarter-Kelly"
+        L.append(txt + ". Positions open at the same time share one Kelly budget.")
     return L
 
 
@@ -509,11 +660,7 @@ def render(o, brief=False, full=False):
     if jr:
         L.append("\nJournal row: " + " | ".join(f"{k}: {v}" for k, v in jr.items()))
     if o.get("sizing"):
-        s = o["sizing"]
-        cap = (f" Capped at the {s['max_position']:g}% position limit, so the stop now risks {f(s['risk_usd'])} "
-               f"({pc(s['risk_usd'] / s['account']).lstrip('+')} of the account)." if s.get("capped") else "")
-        L.append(f"Size for {s['risk_pct']}% risk on {f(s['account'])}: {s['units']:,.4g} units, {f(s['notional'])} notional "
-                 f"({pc(s['pct_of_account']).lstrip('+')} of the account; above 100% means leverage).{cap}")
+        L += render_sizing(o["sizing"])
     L.append("\n### Evidence\n| Family | Vote | Reading |\n|---|---|---|")
     for e in o["evidence"]:
         L.append(f"| {e['family']} | {e['vote']:+.2f} | {e['reading']} |")
@@ -665,6 +812,8 @@ def main():
     p.add_argument("--account", type=float, help="account size in USD, for position sizing")
     p.add_argument("--risk", type=float, help="percent of the account to risk per trade, e.g. 1")
     p.add_argument("--max-position", type=float, help="cap any one position at this percent of the account, e.g. 20")
+    p.add_argument("--vol-target", type=float, help="cap the position so its annualized volatility is at most this "
+                   "percent of the account, e.g. 20 (needs --account)")
     p.add_argument("--out", metavar="DIR", help="also write each plan to DIR as <SYMBOL>_<horizon>.md and .json "
                    "(for a digest or another tool to read from disk)")
     p.add_argument("--pine", metavar="PATH", help="also write a TradingView Pine Script v6 indicator with the plan's "
@@ -693,7 +842,7 @@ def main():
             try:
                 outs.append(plan(sym, derivs=not args.no_derivs, side=args.side, backdrop=backdrop, btc=btc,
                                  account=args.account, risk_pct=args.risk, horizon=hz, asset=args.asset,
-                                 max_position=args.max_position))
+                                 max_position=args.max_position, vol_target=args.vol_target))
             except FetchError as e:
                 print(f"skipped {sym.upper()}: {e}", file=sys.stderr)
     if args.pine:
@@ -708,11 +857,15 @@ def main():
             with open(base + ".json", "w") as fh:
                 json.dump(strip(o), fh, indent=2, default=str)
             print(f"wrote {base}.md and .json", file=sys.stderr)
+    port = portfolio_check(outs)
     if args.json:
-        print(json.dumps([strip(o) for o in outs], indent=2, default=str))
+        print(json.dumps([strip(o) for o in outs] + ([{"portfolio": port}] if port else []), indent=2, default=str))
         return
     for o in outs:
         print(render(o, brief=args.brief, full=args.full))
+        print()
+    if port:
+        print(render_portfolio(port))
         print()
     print("Conditional research, not instructions. Levels are where the evidence clusters; the stop is where the idea is "
           "wrong. Size so the stop costs what you planned to lose.")

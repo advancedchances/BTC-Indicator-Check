@@ -38,8 +38,10 @@ What it computes (formulas match TradingView's built-ins; see ta_core.py):
     so you can see where several independent levels agree
   - Signals firing on the last closed bar, each with its own track record
     on this coin: how often it worked over the next 7/21/42 days (daily
-    signals) or 4/8/13 weeks (weekly signals), a 90% lower bound on the win
-    rate, and its edge over an average day
+    signals) or 4/8/13 weeks (weekly signals), against how often the same
+    bet won from any day, and its edge over an average day. "Proven" needs
+    10+ firings that don't share a window and a binomial p-value that
+    survives a 10% false-discovery rate across all ~47 signals on the coin
 
 Signals and indicators use closed bars only; the forming bar is shown as the
 live price. Nothing here is a trade instruction. Setups are conditional
@@ -64,7 +66,8 @@ DAILY_HORIZONS, DAILY_PRIMARY, DAILY_COOLDOWN = (7, 21, 42), 21, 10
 WEEKLY_HORIZONS, WEEKLY_PRIMARY, WEEKLY_COOLDOWN = (4, 8, 13), 8, 4
 HISTORY_DAYS = 4000
 HOURLY_DAYS = 60
-PROVEN_MIN_N = 10
+PROVEN_MIN_N = 10   # non-overlapping firings a signal needs before it can be called proven
+FDR_Q = 0.10        # false-discovery rate for the proven grade across all signals on a coin
 NOW = None  # set to an epoch time to analyze history as of that moment (plan_backtest.py does)
 
 
@@ -603,12 +606,23 @@ def grade_signal(series, idx, direction, horizons, primary, cooldown, bench=None
         if res[hz]["mean"] is not None and res[hz]["baseline_mean"] is not None:
             res[hz]["edge"] = res[hz]["mean"] - res[hz]["baseline_mean"]
     pr = res[primary]
+    # Firings closer together than the grading horizon share most of their forward window, so they are not
+    # separate trials. The test uses only firings that don't overlap, against the coin's any-day win rate.
+    indep, free = [], -1
+    for i in kept:
+        if i > free and i + primary < n:
+            indep.append(i)
+            free = i + primary
+    iw = sum(direction * (c[i + primary] / c[i] - 1) > 0 for i in indep)
+    base_win = pr["baseline_win"] if pr["baseline_win"] is not None else 0.5
+    res["independent"] = {"n": len(indep), "wins": iw, "win_rate": iw / len(indep) if indep else None,
+                          "p_value": T.binom_sf(iw, len(indep), base_win) if indep else None}
+    res["candidate"] = (len(indep) >= PROVEN_MIN_N and (pr.get("edge") or 0) > 0
+                        and res["independent"]["win_rate"] > base_win)
     if pr["n"] < 5:
         g = "too few"
-    elif pr["n"] >= PROVEN_MIN_N and pr["wilson_lb"] >= 0.5 and (pr.get("edge") or 0) > 0:
-        g = "proven"
-    elif pr["win_rate"] > 0.5 and (pr.get("edge") or 0) > 0:
-        g = "positive, unproven"
+    elif pr["win_rate"] > base_win and (pr.get("edge") or 0) > 0:
+        g = "positive, unproven"  # backtest() promotes it to proven if it survives the false-discovery test
     else:
         g = "coin-flip or worse"
     res["grade"] = g
@@ -635,6 +649,14 @@ def backtest(dc, wc, bench_d=None, bench_w=None):
         g = grade_signal(wc, idx, direction, WEEKLY_HORIZONS, WEEKLY_PRIMARY, WEEKLY_COOLDOWN, bw, recent_bars=2)
         out.append({"key": key, "label": label, "direction": "bullish" if direction > 0 else "bearish",
                     "timeframe": "1W", "primary": WEEKLY_PRIMARY, **g})
+    # About 47 signals are tested per coin, so a few clear any fixed bar by luck. Proven = survives the
+    # Benjamini-Hochberg false-discovery rule at FDR_Q across all of them, on non-overlapping firings.
+    passed = T.benjamini_hochberg([s["independent"]["p_value"] for s in out], FDR_Q)
+    tested = sum(s["independent"]["p_value"] is not None for s in out)
+    for s, ok in zip(out, passed):
+        s["tests"] = tested
+        if ok and s["candidate"]:
+            s["grade"] = "proven"
     return out
 
 
@@ -893,6 +915,14 @@ def analyze(symbol, with_derivs=False, bench=None, data=None, asset=None):
 
 # ---------------------------------------------------------------- rendering
 
+SIGNAL_NOTE = ("\nWin rate and median at the grading horizon (21 days for daily signals, 8 weeks for weekly), "
+               "direction-adjusted. Any-day win rate: how often the same bet won from a random day, the bar a signal "
+               "has to clear. Separate firings: firings at least one horizon apart, so no two share a window; p is "
+               "the chance of that many wins from them at the any-day rate. Edge: average return after the signal "
+               "minus the average over all days. Typical drawdown: median worst move against the signal before the "
+               "horizon (use it to size stops). Proven = 10+ separate firings, positive edge, and a p-value that "
+               "survives a 10% false-discovery rate across every signal tested on this coin.")
+
 def f(x, nd=6):
     if x is None:
         return "n/a"
@@ -913,15 +943,22 @@ def r1(x):
     return "n/a" if x is None else f"{x:.1f}"
 
 
+def p_text(p):
+    return "n/a" if p is None else "<0.001" if p < 0.001 else f"{p:.3f}" if p < 0.1 else f"{p:.2f}"
+
+
 def render_signal_rows(sigs, bench_name=None):
-    lines = ["| Signal | TF | Last fired | Dir | n | Win rate | 90% floor | Median | Edge vs any day | Typical drawdown | Grade |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines = ["| Signal | TF | Last fired | Dir | n | Win rate | Any-day win rate | Separate firings | p | Median | Edge vs any day "
+             "| Typical drawdown | Grade |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in sigs:
         pr = s[s["primary"]]
+        ind = s["independent"]
         hz = f"{s['primary']}{'d' if s['timeframe'] == '1D' else 'w'}"
         lines.append(f"| {s['label']} | {s['timeframe']} | {s['last'] or '-'} | {s['direction']} | {pr['n']} "
-                     f"| {rate(pr['win_rate'])} | {rate(pr['wilson_lb'])} "
-                     f"| {pc(pr['median'])} | {pc(pr.get('edge'))} | {pc(pr['mae_median'])} | {s['grade']} ({hz}) |")
+                     f"| {rate(pr['win_rate'])} | {rate(pr['baseline_win'])} | {ind['n']} ({rate(ind['win_rate'])} won) "
+                     f"| {p_text(ind['p_value'])} | {pc(pr['median'])} | {pc(pr.get('edge'))} | {pc(pr['mae_median'])} "
+                     f"| {s['grade']} ({hz}) |")
     return lines
 
 
@@ -1014,10 +1051,7 @@ def render(a):
     L.append(f"\n### Signals firing now, and how each has traded on {a['symbol']}")
     if a["signals_now"]:
         L += render_signal_rows(a["signals_now"])
-        L.append("\nWin rate and median at the grading horizon (21 days for daily signals, 8 weeks for weekly), "
-                 "direction-adjusted. 90% floor: lower bound of the win rate. Edge: average return after the signal "
-                 "minus the average over all days. Typical drawdown: median worst move against the signal before "
-                 "the horizon (use it to size stops). Proven = 10+ trades and a 90% floor above 50%.")
+        L.append(SIGNAL_NOTE)
     else:
         L.append("None of the tracked signals fired on the last closed bars.")
     opens = [(s, o) for s in a["backtest"] for o in s["open"] if s["grade"] in ("proven", "positive, unproven")]
@@ -1081,12 +1115,6 @@ def strip(a):
     return a
 
 
-def _json_anywhere(sub):
-    """Let --json follow the subcommand too (`liqmap BTC --json`), not only precede it."""
-    for sp in sub.choices.values():
-        sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="emit JSON")
-
-
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--json", action="store_true", help="emit JSON")
@@ -1099,7 +1127,7 @@ def main():
         if name in ("analyze", "levels"):
             sp.add_argument("--derivs", action="store_true", help="add funding, OI, whale positions and liquidation map")
     sub.add_parser("cycle", help="BTC cycle gauges")
-    _json_anywhere(sub)
+    T.json_anywhere(sub)
     args = p.parse_args()
 
     if args.cmd == "cycle":
@@ -1166,8 +1194,10 @@ def main():
                 print("\n".join(render_signal_rows(sorted(a["backtest"], key=lambda s: (
                     {"proven": 0, "positive, unproven": 1, "coin-flip or worse": 2, "too few": 3}[s["grade"]],
                     -(s[s["primary"]].get("edge") or -1))))))
-                print("\nIn-sample on one coin; with ~45 signals tested, expect two or three to look good by chance. "
-                      "Prefer signals that are also proven on BTC and ETH.\n")
+                print(SIGNAL_NOTE)
+                print(f"\nIn-sample on one coin. {a['backtest'][0].get('tests', 0)} signals were tested, so the proven "
+                      "grade is corrected for multiple testing; a 'positive, unproven' signal can still be luck. "
+                      "Prefer signals that also hold up on BTC and ETH.\n")
         elif args.cmd == "seasonality":
             for r in results:
                 print(f"## {r['symbol']} returns by calendar month ({r['source']})\n")
