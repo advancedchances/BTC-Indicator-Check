@@ -1,6 +1,6 @@
 ---
 name: crypto-analyst
-description: Evidence-first crypto research analyst that hunts for mispriced tokens using fundamentals, on-chain data, tokenomics, market structure and venture-style due diligence, then actively tries to disprove its own thesis. Use this skill whenever the user wants undervalued, asymmetric or overlooked crypto or altcoin opportunities, asks what to research or accumulate in crypto right now, wants a crypto market regime or sector-rotation read, or asks for due diligence, a deep dive, a bull/bear case, tokenomics or unlock analysis, or valuation work (FDV, MC/revenue, MC/TVL, fees) on any token or protocol, or asks to update, re-check or grade an earlier crypto scan, or wants entry and exit levels, a trade plan, support and resistance, technical analysis (RSI, MACD, pivots, yearly opens, Ichimoku), funding rates, open interest, whale positioning or a liquidation map for a ticker (crypto, stocks or ETFs), or wants a trade journal graded, even if they never say "research" or "analyst". Not for placing trades.
+description: Evidence-first crypto research analyst that hunts for mispriced tokens using fundamentals, on-chain data, tokenomics, market structure and venture-style due diligence, then actively tries to disprove its own thesis. Use this skill whenever the user wants undervalued, asymmetric or overlooked crypto or altcoin opportunities, asks what to research or accumulate in crypto right now, wants a crypto market regime or sector-rotation read, or asks for due diligence, a deep dive, a bull/bear case, tokenomics or unlock analysis, or valuation work (FDV, MC/revenue, MC/TVL, fees) on any token or protocol, or asks to update, re-check or grade an earlier crypto scan, or wants entry and exit levels, a trade plan, support and resistance, technical analysis (RSI, MACD, pivots, yearly opens, Ichimoku), funding rates, open interest, whale positioning or a liquidation map for a ticker (crypto, stocks or ETFs), or wants a trade journal graded, or asks whether an indicator, signal or strategy actually works, wants a backtest, or wants a trading bot's rules designed or reviewed, even if they never say "research" or "analyst". Not for placing trades.
 ---
 
 # Crypto Analyst
@@ -19,6 +19,7 @@ In crypto research, the edge comes from discipline, not optimism. Most of what c
 | "Update the scan", "How did your picks do?", "Make this better" after an earlier report | **Follow-up** | Re-check the earlier calls first (see "Follow-up mode" below), then refresh Steps 1 and 4–8 for the finalists and near-misses |
 | "Where should I buy BTC?", "Levels for HYPE", "Entry and exit for SOL", "Technical read on ETH", "Funding and liquidations on X", a stock or ETF ticker | **Entry/exit plan** | Run `scripts/trade_plan.py <TICKER>` and follow "Entry/exit plan mode" below. Add fundamentals (Steps 4–7) only if the user asks whether the asset is worth owning |
 | "Grade my trading", "Which of my setups work?", a trade-journal export | **Journal review** | Run `scripts/journal_stats.py` on the export and follow "Journal review" below |
+| "Does this indicator work?", "Backtest X", "Is trend following worth it?", "Design or review my bot's rules" | **Strategy test** | Read `references/strategy-research.md`, run `scripts/strategy_lab.py` (and `plan_backtest.py` for the plans), and follow "Strategy test mode" below |
 
 ## Ground rules for data
 
@@ -157,9 +158,9 @@ When the user comes back to an earlier scan, grade it before you extend it. A fo
 
 When the user gives a ticker and wants to know where to get in or out, read `references/technical-analysis.md`, then:
 
-1. Run `python scripts/trade_plan.py <TICKER>`. Use `--horizon both` for BTC, ETH or anything the user holds as a core position (a swing plan for days to weeks and a position plan for weeks to months), `--side long` when they only want entries, `--account`, `--risk` and `--max-position` when they want a size, and `--asset stock` for stocks and ETFs (Yahoo Finance candles, SPY as the benchmark, no derivatives). `--pine FILE` writes a TradingView Pine Script v6 indicator with the levels and alert conditions; `--out DIR` writes each plan as Markdown and JSON for another tool to read.
+1. Run `python scripts/trade_plan.py <TICKER>`. Use `--horizon both` for BTC, ETH or anything the user holds as a core position (a swing plan for days to weeks and a position plan for weeks to months), `--side long` when they only want entries, `--account`, `--risk`, `--max-position` and `--vol-target` when they want a size (the size is the smallest of the three limits, with a Kelly line from the tested record, and several tickers get a portfolio check of how much they move together), and `--asset stock` for stocks and ETFs (Yahoo Finance candles, SPY as the benchmark, no derivatives). `--pine FILE` writes a TradingView Pine Script v6 indicator with the levels and alert conditions; `--out DIR` writes each plan as Markdown and JSON for another tool to read.
 2. Check the triggers against the record: `python scripts/technicals.py backtest <TICKER>` shows which signals have actually worked on this coin. At an entry zone, recommend waiting for a trigger with a positive record rather than the first touch.
-3. Quote the plan's **tested record**, the line under its grade. It comes from `references/plan_calibration.json`, built by `scripts/plan_backtest.py`, which replays chart-only plans weekly on BTC, ETH and SOL since 2017. Most kinds of plan tested near breakeven. Swing longs with the trend at grade A were the clear exception. Short plans had no edge in any regime, so present short levels as places to reduce or exit a holding. A grade is a description of the setup, not a forecast; the tested record says how that kind of setup has actually traded.
+3. Quote the plan's **tested record**, the line under its grade. It comes from `references/plan_calibration.json`, built by `scripts/plan_backtest.py`, which replays chart-only plans weekly on BTC, ETH and SOL since 2017, after fees and slippage. Overall, the plans lost money after costs. Swing longs with the trend at grade A were the one positive kind in both halves (+0.26R, but with a 90% floor near zero). Short plans and counter-trend plans lost money, so present short levels as places to reduce or exit a holding. A grade is a description of the setup, not a forecast; the tested record says how that kind of setup has actually traded.
 4. Present it as `references/technical-analysis.md` section 8 describes. Lead with the bias, grade and plan table (entries with what's there, stop, exits with reward/risk, the alternative breakout entry). Then give the readings that matter most, what to wait for, and what makes the plan wrong. Name the weekly or monthly closes that matter in the next few days.
 5. If the user has written rules or exit levels (a trade journal, a thesis file, a signal system), check the plan against them in the conversation. Flag where a planned trade would break a rule they wrote.
 
@@ -169,11 +170,27 @@ To keep a dashboard or a daily alert current, `python scripts/export_dashboard.p
 
 ## Journal review
 
-When the user shares a trade journal (a CSV export, or a spreadsheet you can export), run `python scripts/journal_stats.py <file(s)>`. It finds columns by name (outcome, PnL, entry, stop, setup tags, type, confidence, size, hold time, notes). It then reports win rate with a 90% floor, average and median return, profit factor and R, broken down by instrument, setup tag, trade type, confidence grade, planned reward/risk, holding time and month. It also counts losses that ran past the stop.
+When the user shares a trade journal (a CSV export, or a spreadsheet you can export), run `python scripts/journal_stats.py <file(s)>`. It finds columns by name (outcome, PnL, entry, stop, setup tags, type, confidence, size, hold time, notes). It then reports win rate with a 90% floor, average and median return, profit factor and R, broken down by instrument, setup tag, trade type, confidence grade, planned reward/risk, holding time and month. It also counts losses that ran past the stop, and, where positions have sizes, builds the account curve (max drawdown, longest losing streak). `--breaker 10` replays a circuit breaker that pauses trading for 14 days after a 10% drawdown, to show whether one would have helped this record.
 
 1. Lead with the few findings that change behaviour, each with its number and sample size: which setups and grades actually paid, where the losses came from (stops not honoured, options, a bad month), and whether confidence labels predicted anything.
 2. Check findings against the market backdrop when you can, for example trades opened when the S&P 500 or BTC was above or below its 50-day average. Small groups are noisy, so say so.
 3. Keep the journal private: findings go in the conversation, never in the repo or a shared page unless the user asks.
+
+## Strategy test mode
+
+When the user asks whether an indicator, signal or strategy works, or wants a bot's rules designed or reviewed, read `references/strategy-research.md` first. It records what has already been tested and how. Then:
+
+1. **Test against holding, after costs.** Run `python scripts/strategy_lab.py <TICKERS> --split 2023-01-01`. Add `--grid` when the rule has a parameter, `--basket <coins>` for rotation or basket rules, and the user's real fees (`--fee-bps`). Lead with **Beats hold**, max drawdown and the before/after split, not with CAGR or a Sharpe above zero. Any long crypto book has had a positive Sharpe.
+2. **For the plans themselves,** quote `plan_backtest.py`'s record and its bot table. Re-run it only after the plan logic changes, since it takes about 20 minutes.
+3. **For a single chart signal,** run `technicals.py backtest <TICKER>` and quote the separate firings, the any-day win rate and p, not just the win rate.
+4. **Say what a result bought.** A rule that beat holding on drawdown but not on CAGR traded return for a smoother ride; say so. Say how many settings were tried, and whether the edge held after 2023.
+5. **Bot design:** follow section 7 of `references/strategy-research.md`:
+   - a trend-with-volatility-target exposure layer;
+   - the plan's long, with-trend levels for entries;
+   - no shorts or counter-trend fades on current evidence;
+   - correlation-aware sizing;
+   - paper trading with every trade logged, because none of these tests is truly out of sample.
+6. **New rule idea?** Add it to `strategy_lab.py` as a signal function. Decide its default parameters before looking at results, report the losers too, and add a unit test in `tests/`.
 
 ## Output
 

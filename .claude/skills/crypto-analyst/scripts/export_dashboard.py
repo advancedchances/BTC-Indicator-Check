@@ -163,8 +163,11 @@ def export(sym, out, near=0.01):
     sig = []
     for s in a["backtest"]:
         pr = s[s["primary"]]
+        ind = s["independent"]
         sig.append({"signal": s["label"], "timeframe": s["timeframe"], "direction": s["direction"], "trades": pr["n"],
-                    "win_rate": r(pr["win_rate"], 4), "floor_90": r(pr["wilson_lb"], 4), "median": r(pr["median"], 4),
+                    "win_rate": r(pr["win_rate"], 4), "floor_90": r(pr["wilson_lb"], 4),
+                    "any_day_win_rate": r(pr["baseline_win"], 4), "separate_firings": ind["n"],
+                    "p_value": r(ind["p_value"], 4), "median": r(pr["median"], 4),
                     "edge": r(pr.get("edge"), 4), "drawdown": r(pr["mae_median"], 4), "grade": s["grade"],
                     "horizon": f"{s['primary']}{'d' if s['timeframe'] == '1D' else 'w'}", "last_fired": s["last"] or "",
                     "firing_now": "yes" if s["active"] else "no"})

@@ -36,9 +36,12 @@ How to turn a ticker into entry and exit levels the user can check, using `scrip
 | Stocks and ETFs | `python scripts/trade_plan.py MSTR IBIT --asset stock` |
 | TradingView indicator with the plan's levels and alerts | `python scripts/trade_plan.py BTC --pine btc.pine` |
 | Position size capped at a share of the account | `python scripts/trade_plan.py SOL --account 160000 --risk 1 --max-position 20` |
+| Position size also capped by a volatility target | `python scripts/trade_plan.py SOL --account 160000 --risk 1 --vol-target 20` |
 | Plans as files for a digest or another tool | `python scripts/trade_plan.py BTC ETH --out reports/` |
 | Dashboard data files and daily alerts | `python scripts/export_dashboard.py BTC --out /tmp/btc_map` |
-| Walk-forward test of the plans (and the record file plans quote) | `python scripts/plan_backtest.py BTC ETH SOL --csv trades.csv --calibration references/plan_calibration.json` |
+| Walk-forward test of the plans, bots that take them, and the record file plans quote | `python scripts/plan_backtest.py BTC ETH SOL --holdout 2023-01-01 --csv trades.csv --calibration references/plan_calibration.json` |
+| Does a rule beat holding? (trend, volatility target, momentum, the notebook's verdict) | `python scripts/strategy_lab.py BTC ETH SOL --split 2023-01-01 --grid` |
+| Cross-coin rules (momentum rotation, trend basket) | `python scripts/strategy_lab.py --basket BTC ETH SOL XRP DOGE ADA LTC LINK BCH` |
 
 Add `--json` to any of them for machine-readable output. All of them use closed bars for signals and print the live price separately. Set `CRYPTO_ANALYST_CACHE` to move the cache (the Hyperliquid leaderboard is 40 MB and is cached for six hours, whale positions for 15 minutes).
 
@@ -110,37 +113,39 @@ Add `--json` to any of them for machine-readable output. All of them use closed 
 
 - Each signal is measured over 7/21/42 days if daily, or 4/8/13 weeks if weekly. It is graded at 21 days or 8 weeks, with a 10-bar cooldown between occurrences.
 - **Win rate** is direction-adjusted: a bearish signal "wins" when price is lower.
-- **90% floor** is the lower end of the Wilson interval on that win rate.
+- **Any-day win rate** is how often the same bet won from a random day. It is the bar to clear: BTC was higher 21 days later from 56% of all days, so a bullish signal that wins 58% has shown nothing.
+- **Separate firings** are firings at least one grading horizon apart, so no two share a forward window. Firings 10 days apart graded over 21 days are mostly the same trade counted twice. **p** is the binomial chance of that many wins among the separate firings at the any-day rate.
 - **Edge** is the average return after the signal minus the average over all days. It answers whether the signal beats just being in the market.
 - **Typical drawdown** is the median worst move against the signal before the horizon. Use it to judge whether a stop survives normal noise.
 - **Grades:**
-  - *proven*: 10 or more trades, a 90% floor above 50%, and positive edge;
-  - *positive, unproven*: a positive win rate and edge, but a floor of 50% or below;
+  - *proven*: 10 or more separate firings, positive edge, and a p-value that survives a 10% false-discovery rate (Benjamini–Hochberg) across every signal tested on the coin;
+  - *positive, unproven*: a win rate above the any-day rate and positive edge, but not proven;
   - *coin-flip or worse*;
   - *too few*: under 5 trades.
-- Everything is in-sample on one coin. With about 45 signals, two or three will look good by chance. Prefer signals that are proven on the coin *and* on BTC or ETH. Use a record to decide which trigger to wait for at a level, never as a forecast.
+- Everything is in-sample on one coin, and about 47 signals are tested, which is why the proven grade is corrected for multiple testing. A *positive, unproven* signal can still be luck. Prefer signals that hold up on the coin *and* on BTC or ETH. Use a record to decide which trigger to wait for at a level, never as a forecast.
 
-## 6. What the backtests say about BTC (30 Oct 2026, Coinbase daily since Nov 2015)
+## 6. What the backtests say about BTC (31 Oct 2026, Coinbase daily since Nov 2015)
 
-- **BTC rewards breakouts, not oversold buys.**
-  - Proven: a close above the prior 55-day high (64% of 58, median +6.3% in 21 days) and a daily close above the Ichimoku cloud (63% of 54).
-  - Negative record: daily RSI reclaiming 30 (41% win, median −1.6%). RSI under 25 wins 60% of the time but has negative edge.
-  - Breakdowns below the 20-day low fail more often than they work (43%).
-- **The weekly 21-week EMA matters.** A weekly close below it led lower 8 weeks later in 61% of 18 cases (median −7.3%). A weekly RSI cross below 50 did so in 67% of 18. Neither is proven yet, but both are worth respecting.
-- **What this means for entries.** At a support zone, wait for a daily close back above a lost level, a cloud reclaim or a 55-day-high style breakout rather than buying the first oversold print. Use oversold readings only to know where to start watching.
+- **No BTC signal is proven once overlap and multiple testing are accounted for.** The old "proven" breakouts only matched BTC's drift. A close above the prior 55-day high won 64% of 58 times (60% of 48 separate firings) against 56% from any day (p = 0.31). A daily close above the Ichimoku cloud won 63% of 54 (59% of 44 separate, p = 0.39). Both are *positive, unproven*.
+- **Oversold buys are the weakest.** Daily RSI reclaiming 30 won 32% of 25 separate firings. RSI under 25 won 60% of 15 but has negative edge (−2.7% against any day).
+- **The weekly bearish signals are the strongest readings.**
+  - A weekly RSI cross below 50 led lower 8 weeks later in 77% of 13 separate firings, against 42% from any week (p = 0.011, median −9.1%).
+  - A weekly close below the 21-week EMA did so in 71% of 14 (p = 0.025).
+  - With 47 tests, neither clears the correction. Treat them as cues to de-risk, not as shorts.
+- **What this means for entries.** At a support zone, wait for a daily close back above a lost level or a cloud reclaim, rather than buying the first oversold print. But don't expect the trigger to add much over BTC's own drift. Use oversold readings only to know where to start watching.
 
 Re-run `technicals.py backtest BTC` before quoting these; they move as history grows.
 
-### What the walk-forward says about the plans themselves (30 Oct 2026)
+### What the walk-forward says about the plans themselves (31 Oct 2026)
 
-`plan_backtest.py` replayed the plan every week on BTC, ETH and SOL from 2017 to October 2026. That is about 4,580 plans, each traded on the bars that followed with limit entries, the stop checked first, thirds at the exits and a time stop. The replay is chart-only: no funding, open interest, whale or liquidation history exists for free.
-- **Overall:** near breakeven. Most filled trades ended at the stop.
-- **Long beats short:** swing longs averaged +0.09R per filled trade, swing shorts −0.18R. Shorts were near breakeven even in bearish regimes.
-- **With the trend beats against it:** swing plans with the trend averaged +0.03R, counter-trend plans −0.14R.
-- **One kind of plan had a clear edge:** swing, long, with the trend, grade A (5–6 points). 56% of 128 filled trades won (90% floor 49%), averaging +0.31R, and it was positive in 8 of 10 years.
-- **A++ did not beat A:** 34% of 29 won. B and C showed no edge, and position plans showed none in chart-only form.
+`plan_backtest.py` replayed the plan every week on BTC, ETH and SOL from 2017 to October 2026: 4,578 plans with limit entries, the stop checked first, thirds at the exits and a time stop, after 10 bps fees and 5 bps slippage. The replay is chart-only: no funding, open interest, whale or liquidation history exists for free. `references/strategy-research.md` has the full results and what they mean for a bot.
+- **Overall:** the plans lost money after costs. Most filled trades ended at the stop or the time stop.
+- **Shorts and counter-trend plans lose:** swing shorts averaged −0.23R and counter-trend swing plans −0.20R, both with 90% floors well below zero.
+- **One kind of plan was positive in both halves:** swing, long, with the trend, grade A. It won 53% of 120 filled trades at +0.26R after costs: +0.29R before 2023 and +0.25R from 2023. Its 90% floor is about zero, so the data can't rule out no edge.
+- **A++ did not beat A,** B and C showed no edge, and position plans showed none in chart-only form.
+- **As a bot**, taking one plan at a time per coin at 1% risk, the best filter made a Sharpe of 0.61. Equal-weight holding made 1.16, and a volatility-targeted trend rule made 1.38 on BTC (`strategy_lab.py`).
 
-`trade_plan.py` prints the matching record under every plan from `references/plan_calibration.json`. Rebuild it after changing the plan logic. With these results, treat a plan as a map of where levels agree and lean on the tested record, not the letter grade, for how much to trust it.
+`trade_plan.py` prints the matching record under every plan from `references/plan_calibration.json`: R after costs, the 90% floor of average R, and the record from 2023 alone. When sizing is asked for, it adds a Kelly line from the same record. Rebuild it after changing the plan logic. With these results, treat a plan as a map of where levels agree, and lean on the tested record, not the letter grade, for how much to trust it.
 
 ## 7. Breakout checklist
 
