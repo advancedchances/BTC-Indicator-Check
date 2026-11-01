@@ -7,6 +7,7 @@ Usage:
   python journal_stats.py trades.csv                 # markdown report
   python journal_stats.py q1.csv q3.csv --json       # several exports at once
   python journal_stats.py trades.csv --min-n 5       # hide groups with fewer trades
+  python journal_stats.py trades.csv --breaker 10    # replay a 10% drawdown circuit breaker (14-day pause)
 
 Input: one or more CSV exports, one row per closed trade. Columns are found
 by name, case-insensitively, so a typical journal works without changes:
@@ -40,7 +41,7 @@ import sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
-from ta_core import median, wilson_lower  # noqa: E402
+from ta_core import max_drawdown, median, wilson_lower  # noqa: E402
 
 COLUMNS = {
     "outcome": ("outcome", "result"),
@@ -111,6 +112,64 @@ def days_between(a, b):
         return None
 
 
+def close_date(opened, closed, hold):
+    import datetime as dt
+    for x in (closed, opened):
+        try:
+            d = dt.date.fromisoformat((x or "")[:10])
+        except ValueError:
+            continue
+        return (d + dt.timedelta(days=int(hold)) if x is opened and hold is not None else d).isoformat()
+    return ""
+
+
+def equity(trades, breaker=None, cooldown=14):
+    """Account equity from each trade's impact (return x position size), compounded in close-date order.
+
+    breaker: replay a circuit breaker. Once realized equity is `breaker` below its peak, trades opened in
+    the next `cooldown` days are skipped; the peak resets when trading resumes."""
+    import datetime as dt
+    ts = sorted((t for t in trades if t["impact"] is not None and t["open"] and t["close"]), key=lambda t: t["close"])
+    if len(ts) < 5:
+        return None
+    eq, curve, streak, worst = 1.0, [1.0], 0, 0
+    for t in ts:
+        eq *= 1 + t["impact"]
+        curve.append(eq)
+        streak = streak + 1 if t["pnl"] < 0 else 0
+        worst = max(worst, streak)
+    mdd, a, b = max_drawdown(curve)
+    out = {"trades": len(ts), "total": eq - 1, "max_dd": mdd, "worst_losing_streak": worst,
+           "dd_from": ts[a - 1]["close"] if a else ts[0]["open"], "dd_to": ts[b - 1]["close"] if b else None}
+    if breaker:
+        skipped, kept, peak, pause_to = [], [], 1.0, None
+        for t in sorted(ts, key=lambda t: t["open"]):
+            day = dt.date.fromisoformat(t["open"])
+            real = 1.0
+            for k in kept:
+                if k["close"] < t["open"]:
+                    real *= 1 + k["impact"]
+            if pause_to and day <= pause_to:
+                skipped.append(t)
+                continue
+            if pause_to and day > pause_to:
+                pause_to, peak = None, real
+            peak = max(peak, real)
+            if real / peak - 1 <= -breaker:
+                pause_to = day + dt.timedelta(days=cooldown)
+                skipped.append(t)
+                continue
+            kept.append(t)
+        eq2, curve2 = 1.0, [1.0]
+        for t in sorted(kept, key=lambda t: t["close"]):
+            eq2 *= 1 + t["impact"]
+            curve2.append(eq2)
+        out["breaker"] = {"threshold": breaker, "cooldown": cooldown, "skipped": len(skipped),
+                          "skipped_impact": sum(t["impact"] for t in skipped), "total": eq2 - 1,
+                          "max_dd": max_drawdown(curve2)[0]}
+    return out
+
+
 def find(header, names):
     low = {h.strip().lower(): h for h in header if h}
     for n in names:
@@ -154,7 +213,7 @@ def load(paths):
                     "hold": hold, "expected": exp if exp and not parse_num(exp) else ("(days given)" if exp else "(none)"),
                     "planned_rr": parse_num(get("rr")),
                     "stalled": any(w in notes for w in ("neckline", "stall")),
-                    "open": (get("open") or "")[:10], "notes": notes,
+                    "open": (get("open") or "")[:10], "close": close_date(get("open"), get("close"), hold), "notes": notes,
                 })
     return trades
 
@@ -201,8 +260,8 @@ def rr_bucket(t):
     return "under 2" if r < 2 else "2-4" if r < 4 else "4-8" if r < 8 else "8 or more"
 
 
-def report(trades, min_n):
-    out = {"overall": stats(trades)}
+def report(trades, min_n, breaker=None, cooldown=14):
+    out = {"overall": stats(trades), "equity": equity(trades, breaker, cooldown)}
     for t in trades:
         t["hold_bucket"] = hold_bucket(t)
         t["rr_bucket"] = rr_bucket(t)
@@ -263,6 +322,17 @@ def render(out):
     L.append(f"Losses beyond 1.25R: {lb['count']} of {lb['of']} losing trades with a stop below entry ({lb['note']}). "
              f"Median planned risk {rate(lb['median_planned_risk'])} vs median realized loss {pct(lb['median_realized_loss'])}; "
              f"on the trades that overshot, the loss ran {pct(lb['avg_overshoot'])} past the stop on average.")
+    eq = out.get("equity")
+    if eq:
+        L.append(f"\nAccount curve ({eq['trades']} closed trades with a position size, compounded by close date): "
+                 f"{pct(eq['total'], 2)} in total; max drawdown {pct(eq['max_dd'], 2)} ({eq['dd_from']} to {eq['dd_to']}); "
+                 f"longest losing streak {eq['worst_losing_streak']} trades.")
+        br = eq.get("breaker")
+        if br:
+            L.append(f"Circuit breaker replay (pause {br['cooldown']} days once the account is {br['threshold'] * 100:g}% "
+                     f"below its peak): {br['skipped']} trades skipped, which had made {pct(br['skipped_impact'], 2)}; "
+                     f"total {pct(br['total'], 2)} against {pct(eq['total'], 2)}, max drawdown {pct(br['max_dd'], 2)} "
+                     f"against {pct(eq['max_dd'], 2)}.")
     L.append("\nBest: " + "; ".join(f"{t['ticker']} {pct(t['pnl'])}" for t in out["best"]))
     L.append("Worst: " + "; ".join(f"{t['ticker']} {pct(t['pnl'])}" for t in out["worst"]))
     L.append("\nRanked by average return. Small groups are noisy: read the 90% floor before trusting a win rate.")
@@ -273,12 +343,15 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("paths", nargs="+", help="CSV exports of closed trades")
     p.add_argument("--min-n", type=int, default=3, help="hide groups with fewer trades (default 3)")
+    p.add_argument("--breaker", type=float, help="replay a circuit breaker: pause after the account falls this "
+                   "percent from its peak, e.g. 10")
+    p.add_argument("--cooldown", type=int, default=14, help="days paused after the breaker trips (default 14)")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
     trades = load(args.paths)
     if not trades:
         sys.exit("no closed trades with a realized return found; check the pnl column")
-    out = report(trades, args.min_n)
+    out = report(trades, args.min_n, args.breaker / 100 if args.breaker else None, args.cooldown)
     print(json.dumps(out, indent=2, default=str) if args.json else render(out))
 
 

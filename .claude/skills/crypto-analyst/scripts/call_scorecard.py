@@ -43,6 +43,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
+from ta_core import median  # noqa: E402
 from valuation_calc import parse_num  # noqa: E402
 
 FIELDS = ["ticker", "group", "reason", "base_price", "base_time", "horizon_days", "current_price", "thin_venue"]
@@ -87,12 +88,6 @@ def fill_prices(rows):
             r["current_price"], r["price_source"] = s["c"][-1], src
         except FetchError as e:
             sys.exit(f"{r['ticker']}: no current price ({e}); fill current_price by hand")
-
-
-def median(xs):
-    xs = sorted(xs)
-    n = len(xs)
-    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
 
 
 def score(rows, benchmark, by="group"):

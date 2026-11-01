@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Indicator math for technicals.py and derivatives.py. Standard library only.
+Indicator math and shared statistics for the skill's scripts. Standard
+library only.
 
 Every function takes plain lists (oldest first) and returns lists of the same
 length, with None where the indicator has not warmed up yet. Formulas follow
@@ -19,10 +20,19 @@ TradingView's built-ins so readings can be checked against a chart:
 Candle series are dicts of lists: {"t": [...], "o": [...], "h": [...],
 "l": [...], "c": [...], "v": [...]}, with "t" the bar's open time in UTC
 epoch seconds.
+
+The statistics section holds what the backtests share: a performance
+scorecard (CAGR, Sharpe, Sortino, max drawdown, Calmar), the probabilistic
+and deflated Sharpe ratios (Bailey and Lopez de Prado), a binomial test, the
+Benjamini-Hochberg false-discovery rule, a block bootstrap for overlapping
+trades, and a filter that keeps only trades that don't overlap.
 """
 
+import argparse
 import datetime as dt
 import math
+import random
+from statistics import NormalDist
 
 DAY = 86400
 
@@ -420,3 +430,211 @@ def last(x, k=1):
             if seen == k:
                 return v
     return None
+
+
+def rolling_vol(c, n=30, periods=365):
+    """Annualized volatility of daily log returns over the last n bars (sample stdev), None until warm."""
+    out = [None] * len(c)
+    lr = [None] + [math.log(c[i] / c[i - 1]) if c[i] > 0 and c[i - 1] > 0 else 0.0 for i in range(1, len(c))]
+    s = s2 = 0.0
+    for i in range(1, len(c)):
+        s, s2 = s + lr[i], s2 + lr[i] ** 2
+        if i > n:
+            s, s2 = s - lr[i - n], s2 - lr[i - n] ** 2
+        if i >= n:
+            var = (s2 - s * s / n) / (n - 1)
+            out[i] = math.sqrt(max(var, 0.0) * periods)
+    return out
+
+
+def correlation(a, b):
+    """Pearson correlation of two equal-length lists (None when either is flat)."""
+    n = len(a)
+    if n < 3 or n != len(b):
+        return None
+    ma, mb = sum(a) / n, sum(b) / n
+    sa = math.sqrt(sum((x - ma) ** 2 for x in a))
+    sb = math.sqrt(sum((y - mb) ** 2 for y in b))
+    if not sa or not sb:
+        return None
+    return sum((x - ma) * (y - mb) for x, y in zip(a, b)) / (sa * sb)
+
+
+# ---------------------------------------------------------------- performance and inference
+
+def max_drawdown(equity):
+    """Largest peak-to-trough fall of an equity curve: (fraction <= 0, peak index, trough index)."""
+    peak, peak_i, worst, at = None, 0, 0.0, (0, 0)
+    for i, x in enumerate(equity):
+        if peak is None or x > peak:
+            peak, peak_i = x, i
+        if peak and x / peak - 1 < worst:
+            worst, at = x / peak - 1, (peak_i, i)
+    return worst, at[0], at[1]
+
+
+def moments(xs):
+    """Mean, sample standard deviation, skew and (non-excess) kurtosis."""
+    n = len(xs)
+    if n < 2:
+        return None, None, None, None
+    m = sum(xs) / n
+    d2 = sum((x - m) ** 2 for x in xs)
+    sd = math.sqrt(d2 / (n - 1))
+    pop = math.sqrt(d2 / n)
+    if not pop:
+        return m, sd, 0.0, 3.0
+    skew = sum((x - m) ** 3 for x in xs) / n / pop ** 3
+    kurt = sum((x - m) ** 4 for x in xs) / n / pop ** 4
+    return m, sd, skew, kurt
+
+
+def perf_stats(rets, periods=365, rf=0.0):
+    """Scorecard for per-period simple returns (one per bar, flat bars as 0).
+
+    Returns total return, CAGR, annualized volatility, Sharpe and Sortino
+    (excess of rf a year), max drawdown, Calmar (CAGR / max drawdown), the
+    per-period Sharpe, skew and kurtosis that psr() needs, and the length."""
+    n = len(rets)
+    if n < 2:
+        return None
+    eq = [1.0]
+    for r in rets:
+        eq.append(eq[-1] * (1 + r))
+    years = n / periods
+    cagr = eq[-1] ** (1 / years) - 1 if eq[-1] > 0 else -1.0
+    rfp = (1 + rf) ** (1 / periods) - 1
+    ex = [r - rfp for r in rets]
+    m, sd, skew, kurt = moments(ex)
+    down = math.sqrt(sum(min(0.0, x) ** 2 for x in ex) / n)
+    sr = m / sd if sd else None
+    mdd = max_drawdown(eq)[0]
+    ann = math.sqrt(periods)
+    return {"total": eq[-1] - 1, "cagr": cagr, "vol": sd * ann if sd is not None else None,
+            "sharpe": sr * ann if sr is not None else None, "sortino": m / down * ann if down else None,
+            "max_dd": mdd, "calmar": cagr / -mdd if mdd < 0 else None,
+            "sr_period": sr, "skew": skew, "kurt": kurt, "n": n, "years": years}
+
+
+def psr(sr, n, skew=0.0, kurt=3.0, sr_ref=0.0):
+    """Probabilistic Sharpe ratio: the probability that the true per-period Sharpe exceeds sr_ref, given a
+    sample of n periods with this skew and kurtosis (fat tails and negative skew widen the doubt)."""
+    if sr is None or n is None or n < 3:
+        return None
+    var = 1 - skew * sr + (kurt - 1) / 4 * sr * sr
+    if var <= 0:
+        return None
+    return NormalDist().cdf((sr - sr_ref) * math.sqrt(n - 1) / math.sqrt(var))
+
+
+def expected_max_sharpe(n_trials, var_sr):
+    """Sharpe the best of n_trials unskilled strategies would show by luck (per period), given the variance
+    of the trials' Sharpe ratios."""
+    if n_trials <= 1 or not var_sr or var_sr <= 0:
+        return 0.0
+    g = 0.5772156649015329  # Euler-Mascheroni
+    z = NormalDist()
+    return math.sqrt(var_sr) * ((1 - g) * z.inv_cdf(1 - 1 / n_trials) + g * z.inv_cdf(1 - 1 / (n_trials * math.e)))
+
+
+def deflated_sharpe(sr, n, skew, kurt, n_trials, var_sr):
+    """Deflated Sharpe ratio: PSR against the Sharpe the best of n_trials would reach by luck."""
+    return psr(sr, n, skew, kurt, expected_max_sharpe(n_trials, var_sr))
+
+
+def sharpe_beat_prob(a, b, block=21, draws=1000, seed=7):
+    """Share of block-bootstrap resamples in which series a has a higher Sharpe ratio than series b.
+
+    a and b are per-period returns on the same days. Days are resampled in
+    blocks of `block` consecutive days, both series together, which keeps fat
+    tails, volatility clustering and the series' correlation. Use it to ask
+    whether a rule beat buy-and-hold on a risk-adjusted basis, not just
+    whether its Sharpe is above zero (any long crypto book's has been)."""
+    k = min(len(a), len(b)) // block
+    if k < 4:
+        return None
+    blocks = []
+    for i in range(k):
+        xa, xb = a[i * block:(i + 1) * block], b[i * block:(i + 1) * block]
+        blocks.append((sum(xa), sum(x * x for x in xa), sum(xb), sum(x * x for x in xb)))
+    rng, m, wins = random.Random(seed), k * block, 0
+    for _ in range(draws):
+        sa = qa = sb = qb = 0.0
+        for _ in range(k):
+            s1, q1, s2, q2 = blocks[rng.randrange(k)]
+            sa, qa, sb, qb = sa + s1, qa + q1, sb + s2, qb + q2
+        va, vb = qa / m - (sa / m) ** 2, qb / m - (sb / m) ** 2
+        ra = (sa / m) / math.sqrt(va) if va > 0 else 0.0
+        rb = (sb / m) / math.sqrt(vb) if vb > 0 else 0.0
+        wins += ra > rb
+    return wins / draws
+
+
+def binom_sf(k, n, p):
+    """P(X >= k) for X ~ Binomial(n, p): a one-sided p-value for k wins in n tries against a base rate p."""
+    if k <= 0:
+        return 1.0
+    if k > n:
+        return 0.0
+    if p <= 0:
+        return 0.0
+    if p >= 1:
+        return 1.0
+    lp, lq, ln = math.log(p), math.log1p(-p), math.lgamma(n + 1)
+    tot = sum(math.exp(ln - math.lgamma(i + 1) - math.lgamma(n - i + 1) + i * lp + (n - i) * lq) for i in range(k, n + 1))
+    return min(1.0, tot)
+
+
+def benjamini_hochberg(pvals, q=0.10):
+    """Which tests survive a false-discovery rate of q. pvals may hold None (not tested); returns booleans."""
+    idx = [i for i, p in enumerate(pvals) if p is not None]
+    m = len(idx)
+    order = sorted(idx, key=lambda i: pvals[i])
+    cut = 0
+    for rank, i in enumerate(order, 1):
+        if pvals[i] <= q * rank / m:
+            cut = rank
+    keep = set(order[:cut])
+    return [i in keep for i in range(len(pvals))]
+
+
+def bootstrap_mean_floor(blocks, q=0.05, draws=2000, seed=7):
+    """q-quantile of the mean when whole blocks of values are resampled with replacement.
+
+    Trades opened in the same month share one market, so they are not
+    independent; resampling months instead of trades keeps that dependence
+    and gives an honest lower bound on the average (q=0.05: a 90% floor)."""
+    sums = [sum(b) for b in blocks if b]
+    lens = [len(b) for b in blocks if b]
+    k = len(sums)
+    if k < 2:
+        return None
+    rng = random.Random(seed)
+    means = []
+    for _ in range(draws):
+        s = c = 0
+        for _ in range(k):
+            j = rng.randrange(k)
+            s += sums[j]
+            c += lens[j]
+        means.append(s / c)
+    means.sort()
+    return means[int(q * draws)]
+
+
+def non_overlapping(spans):
+    """Indexes of spans [(start, end), ...] kept by taking a span only once the last kept one has ended,
+    in start order. The kept spans are the trades that don't share any bars."""
+    kept, free = [], -math.inf
+    for i in sorted(range(len(spans)), key=lambda i: spans[i][0]):
+        s, e = spans[i]
+        if s > free:
+            kept.append(i)
+            free = e
+    return kept
+
+
+def json_anywhere(sub):
+    """Let --json follow the subcommand too (`liqmap BTC --json`), not only precede it."""
+    for sp in sub.choices.values():
+        sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="emit JSON")

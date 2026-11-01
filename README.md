@@ -10,58 +10,39 @@ A simple Bitcoin indicator scanner built in Python. Fetches live market data fro
 - Bollinger Bands (20) with upper/lower band alerts
 - 200-Week SMA with alert when price drops below (historically rare bear market signal)
 - Overall signal verdict (Bullish / Bearish / Neutral)
+- The verdict's own track record: how it has traded since 2016, after costs, against buy-and-hold
+
+Indicators are computed on closed daily Coinbase candles with the skill's TradingView-matching formulas (`ta_core.py`), so the notebook and the skill always agree.
 
 ## Setup
 
-### 1. Install Dependencies
+No API keys and nothing to install: the notebook and every script use only the Python standard library (Python 3.12 or later, as CI runs) and public endpoints.
 
-```bash
-pip install anthropic requests ta
-```
-
-### 2. Set Your API Key
-
-This project uses the Anthropic API. Set your key as an environment variable so it stays out of your code.
-
-**Windows (Anaconda Prompt):**
-```bash
-setx ANTHROPIC_API_KEY "your-api-key-here"
-```
-
-**Mac/Linux:**
-```bash
-export ANTHROPIC_API_KEY="your-api-key-here"
-```
-
-Then restart your terminal and Jupyter.
-
-### 3. Run the Notebook
-
-Open the notebook in Jupyter Notebook and run all cells (Cell > Run All).
-
-To refresh signals, just re-run the last two cells.
+Open `BTC Indicator Check.ipynb` in Jupyter from the repo root and run all cells (Cell > Run All). To refresh, re-run from the price cell down.
 
 ## Example Output
 
 ```
 ==========================================================
-  BTC TRADING SIGNALS  |  2026-03-08 08:46:51
+  BTC TRADING SIGNALS  |  2026-10-31 14:53 UTC
 ==========================================================
-  Current Price :  $   67,541.00
-  200W SMA      :  $   58,672.67
+  Current Price :  $   77,398.23
+  200W SMA      :  $   67,157.27
 
-  [OK] Price is $8,868.33 ABOVE the 200W SMA
+  [OK] Price is $10,240.96 ABOVE the 200W SMA
 
 ----------------------------------------------------------
-  INDICATOR SIGNALS:
+  INDICATOR SIGNALS (last daily close):
 ----------------------------------------------------------
-  [NEUTRAL]  RSI neutral (41.9)
+  [NEUTRAL]  RSI neutral (34.3)
   [NEUTRAL]  MACD no crossover
-  [NEUTRAL]  Price inside Bollinger Bands
+  [ BUY  ]  Price at/below lower Bollinger Band
 ----------------------------------------------------------
-  OVERALL: NEUTRAL  (0 buy vs 0 sell signals)
+  OVERALL: BULLISH  (1 buy vs 0 sell signals)
 ==========================================================
 ```
+
+**Read the verdict as a dashboard, not a trading rule.** Tested as a long/flat rule on daily bars, with 15 bps of costs per trade, it lost to buy-and-hold on BTC (Sharpe 0.44 vs 1.03), ETH and SOL. A trend rule scaled to a volatility target beat holding on all three, with about a third of the drawdown (see *Strategy lab* below).
 
 ## Crypto Analyst Skill (Claude Code)
 
@@ -148,12 +129,52 @@ More tools built on the same engine:
 python .claude/skills/crypto-analyst/scripts/trade_plan.py MSTR IBIT --asset stock         # stocks and ETFs (Yahoo Finance, SPY benchmark)
 python .claude/skills/crypto-analyst/scripts/trade_plan.py BTC --pine btc.pine             # TradingView Pine v6 indicator: levels + alert conditions
 python .claude/skills/crypto-analyst/scripts/trade_plan.py BTC --out reports/              # plans as .md and .json files for a digest to read
-python .claude/skills/crypto-analyst/scripts/plan_backtest.py BTC ETH SOL                  # walk-forward test of the plans since 2017
+python .claude/skills/crypto-analyst/scripts/trade_plan.py BTC ETH SOL --account 100000 --risk 1 --vol-target 20   # sizes, Kelly line, correlation check
+python .claude/skills/crypto-analyst/scripts/plan_backtest.py BTC ETH SOL --holdout 2023-01-01   # walk-forward test of the plans since 2017, after costs, with bots
 python .claude/skills/crypto-analyst/scripts/export_dashboard.py BTC --out /tmp/btc_map    # dashboard data files + alerts.json
-python .claude/skills/crypto-analyst/scripts/journal_stats.py trades.csv                   # grade a trade journal by setup, grade, type and hold time
+python .claude/skills/crypto-analyst/scripts/journal_stats.py trades.csv --breaker 10      # grade a trade journal; replay a drawdown circuit breaker
 ```
 
-Every plan prints its **tested record**: how plans of the same kind (horizon, side, with or against the trend, grade) traded in the walk-forward test. The test replayed about 4,580 chart-only plans on BTC, ETH and SOL from 2017 to 2026. Most kinds of plan were near breakeven and shorts had no edge. Swing longs with the trend at grade A won 56% of 128 trades for +0.31R on average.
+Every plan prints its **tested record**: how plans of the same kind (horizon, side, with or against the trend, grade) traded in the walk-forward test, after 10 bps fees and 5 bps slippage. The test replayed 4,578 chart-only plans on BTC, ETH and SOL from 2017 to 2026:
+
+- Overall, the plans lost money after costs.
+- Short plans and counter-trend plans lost about 0.2R a trade.
+- Swing longs with the trend at grade A were the one kind positive in both halves of the sample: +0.29R before 2023 and +0.25R after. Their 90% floor is about zero.
+- As a bot taking one plan at a time per coin at 1% risk, the best filter made a Sharpe of 0.61, against 1.16 for simply holding.
+
+### Strategy lab: which rules beat holding
+
+`strategy_lab.py` tests rules that set a position each day against buy-and-hold. Every rule gets the same scorecard: CAGR, Sharpe, Sortino, max drawdown, Calmar, time in market and turnover. Costs are included, positions are set on the close and traded at the next open, and every result carries a check on whether it beat holding by more than luck:
+
+```bash
+python .claude/skills/crypto-analyst/scripts/strategy_lab.py BTC ETH SOL --split 2023-01-01   # each rule on each coin, before/after 2023
+python .claude/skills/crypto-analyst/scripts/strategy_lab.py BTC --grid                       # parameter grids: plateau or spike?
+python .claude/skills/crypto-analyst/scripts/strategy_lab.py --basket BTC ETH SOL XRP DOGE ADA LTC LINK BCH   # rotation and basket rules
+```
+
+Results on 31 Oct 2026, with 15 bps costs:
+
+| Rule | BTC Sharpe | ETH | SOL | Beats hold (BTC / ETH / SOL) | BTC max DD |
+|---|---|---|---|---|---|
+| Buy and hold | 1.03 | 0.74 | 0.70 | benchmark | −84% |
+| Notebook verdict | 0.44 | 0.31 | 0.48 | 1% / 7% / 28% | −76% |
+| Long above the 200-day SMA | 1.10 | 0.93 | 0.71 | 61% / 79% / 55% | −71% |
+| Trend (share of 28/56/112/224-day returns up) | 1.28 | 0.90 | 0.94 | 93% / 79% / 77% | −63% |
+| Trend scaled to 40% volatility | 1.38 | 1.03 | 0.97 | 96% / 90% / 82% | −35% |
+
+**Beats hold** is the share of block-bootstrap resamples in which the rule's Sharpe beat buy-and-hold's.
+
+- The volatility-targeted trend rule's edge came from the crashes: it lost 26% in 2018 and 20% in 2022, while BTC lost 73% and 64%.
+- Since 2023 it has matched holding's Sharpe on all three coins with about half the drawdown.
+- Cross-coin momentum (rotating into last month's winners) did not reliably beat an equal-weight basket.
+
+`references/strategy-research.md` has the full results, the methods (taken from the review of quants.md's 50-strategy library) and what they mean for a bot.
+
+### Tests
+
+```bash
+python -m unittest discover -s .claude/skills/crypto-analyst/tests -v   # offline, standard library only; CI runs it on every push
+```
 
 ## Disclaimer
 
