@@ -59,6 +59,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
+from formatting import num, pct, price, rate  # noqa: E402
 import ta_core as T  # noqa: E402
 from market_data import FetchError, load_candles, forming, fetch  # noqa: E402
 
@@ -923,26 +924,6 @@ SIGNAL_NOTE = ("\nWin rate and median at the grading horizon (21 days for daily 
                "horizon (use it to size stops). Proven = 10+ separate firings, positive edge, and a p-value that "
                "survives a 10% false-discovery rate across every signal tested on this coin.")
 
-def f(x, nd=6):
-    if x is None:
-        return "n/a"
-    if abs(x) >= 1000:
-        return f"{x:,.0f}"
-    return f"{x:,.{nd}g}"
-
-
-def pc(x, nd=1):
-    return "n/a" if x is None else f"{x * 100:+.{nd}f}%"
-
-
-def rate(x):
-    return "n/a" if x is None else f"{x * 100:.0f}%"
-
-
-def r1(x):
-    return "n/a" if x is None else f"{x:.1f}"
-
-
 def p_text(p):
     return "n/a" if p is None else "<0.001" if p < 0.001 else f"{p:.3f}" if p < 0.1 else f"{p:.2f}"
 
@@ -957,7 +938,7 @@ def render_signal_rows(sigs, bench_name=None):
         hz = f"{s['primary']}{'d' if s['timeframe'] == '1D' else 'w'}"
         lines.append(f"| {s['label']} | {s['timeframe']} | {s['last'] or '-'} | {s['direction']} | {pr['n']} "
                      f"| {rate(pr['win_rate'])} | {rate(pr['baseline_win'])} | {ind['n']} ({rate(ind['win_rate'])} won) "
-                     f"| {p_text(ind['p_value'])} | {pc(pr['median'])} | {pc(pr.get('edge'))} | {pc(pr['mae_median'])} "
+                     f"| {p_text(ind['p_value'])} | {pct(pr['median'])} | {pct(pr.get('edge'))} | {pct(pr['mae_median'])} "
                      f"| {s['grade']} ({hz}) |")
     return lines
 
@@ -970,8 +951,8 @@ def render(a):
     L.append(f"## {a['symbol']} — technical dossier")
     L.append(f"*{a['as_of']} · candles: {a['source']} since {a['history_from']} · signals use closed bars*\n")
     L.append(f"**{sc['stance']}** · trend {sc['trend']:+d}/5 · momentum {sc['momentum']:+d}/5 · "
-             f"live {f(a['live'])} · 1d {pc(a['change']['1d'])} · 7d {pc(a['change']['7d'])} · 30d {pc(a['change']['30d'])} · "
-             f"ATR(14) {f(atr)} ({pc(atr / a['live'] if atr else None)})")
+             f"live {price(a['live'])} · 1d {pct(a['change']['1d'])} · 7d {pct(a['change']['7d'])} · 30d {pct(a['change']['30d'])} · "
+             f"ATR(14) {price(atr)} ({pct(atr / a['live'] if atr else None)})")
     L.append(f"- Trend: {', '.join(sc['trend_reasons'])}")
     L.append(f"- Momentum: {', '.join(sc['momentum_reasons'])}")
     if sc["flags"]:
@@ -982,9 +963,9 @@ def render(a):
     st = a["setups"]
     rows = list(reversed(st["resistances"])) + st["at_price"] + st["supports"]
     for z in rows:
-        L.append(f"| {z['side']} | {f(z['low'])}-{f(z['high'])} | {pc(z['distance'])} | {z['weight']:.1f} ({z['count']}) "
+        L.append(f"| {z['side']} | {price(z['low'])}-{price(z['high'])} | {pct(z['distance'])} | {z['weight']:.1f} ({z['count']}) "
                  f"| {'; '.join(z['levels'][:6])}{' …' if len(z['levels']) > 6 else ''} |")
-    L.append(f"\nZones merge levels within {pc(a['zone_tolerance'], 2).lstrip('+')} of each other (0.35 ATR); "
+    L.append(f"\nZones merge levels within {pct(a['zone_tolerance'], 2).lstrip('+')} of each other (0.35 ATR); "
              "strength is the sum of the levels' weights.\n")
     an = a["anchors"]
     L.append("### Period opens and prior ranges")
@@ -992,15 +973,15 @@ def render(a):
     for nm in ("year", "quarter", "month", "week", "day"):
         x = an[nm]
         pr = x["prior"] or {}
-        L.append(f"| {nm.capitalize()} | {f(x['open'])} | {pc(a['live'] / x['open'] - 1 if x['open'] else None)} "
-                 f"| {f(pr.get('high'))} | {f(pr.get('low'))} | {f(pr.get('close'))} |")
+        L.append(f"| {nm.capitalize()} | {price(x['open'])} | {pct(a['live'] / x['open'] - 1 if x['open'] else None)} "
+                 f"| {price(pr.get('high'))} | {price(pr.get('low'))} | {price(pr.get('close'))} |")
     L.append("\n### Pivot points (classic; Fibonacci and Camarilla in --json)")
     L.append("| From prior | S3 | S2 | S1 | P | R1 | R2 | R3 |\n|---|---|---|---|---|---|---|---|")
     for code, nm in (("D", "day"), ("W", "week"), ("M", "month"), ("Q", "quarter"), ("Y", "year")):
         p = a["pivots"].get(code)
         if p:
             c = p["classic"]
-            L.append(f"| {nm} | {f(c['S3'])} | {f(c['S2'])} | {f(c['S1'])} | {f(c['P'])} | {f(c['R1'])} | {f(c['R2'])} | {f(c['R3'])} |")
+            L.append(f"| {nm} | {price(c['S3'])} | {price(c['S2'])} | {price(c['S1'])} | {price(c['P'])} | {price(c['R1'])} | {price(c['R2'])} | {price(c['R3'])} |")
     L.append("\n### Momentum by timeframe")
     L.append("| TF | RSI(14) | RSI vs its 14-bar MA | Stoch RSI K/D | MACD vs signal | Histogram | Last MACD cross | RSI regime |")
     L.append("|---|---|---|---|---|---|---|---|")
@@ -1011,7 +992,7 @@ def render(a):
         m = x["macd"] or {}
         rel = "above" if x["rsi_ma"] is not None and x["rsi"] > x["rsi_ma"] else "below" if x["rsi_ma"] is not None else "n/a"
         cross = f"{m.get('last_cross')} {m.get('bars_since_cross')} bars ago" if m.get("last_cross") else "n/a"
-        L.append(f"| {k} | {r1(x['rsi'])} | {rel} | {r1(x['stoch_k'])}/{r1(x['stoch_d'])} "
+        L.append(f"| {k} | {num(x['rsi'], 1)} | {rel} | {num(x['stoch_k'], 1)}/{num(x['stoch_d'], 1)} "
                  f"| {'above' if m.get('above_signal') else 'below'} ({'above' if m.get('above_zero') else 'below'} zero) "
                  f"| {'rising' if m.get('hist_rising') else 'falling'} {m.get('hist_streak', '')} bars | {cross} "
                  f"| {x.get('rsi_regime') or 'n/a'} |")
@@ -1022,25 +1003,25 @@ def render(a):
     L.append("\n### Trend")
     L.append("| Average | Value | Price vs | Slope |\n|---|---|---|---|")
     for k, v in a["moving_averages"].items():
-        L.append(f"| {k} | {f(v['value'])} | {pc(v['price_vs'])} | {pc(v['slope_20d'])} |")
+        L.append(f"| {k} | {price(v['value'])} | {pct(v['price_vs'])} | {pct(v['slope_20d'])} |")
     if a["ma_cross"]:
         L.append(f"\nLast 50/200 cross: {a['ma_cross']['kind']} on {a['ma_cross']['date']}.")
     for k, ic in a["ichimoku"].items():
         tk = ic["last_tk_cross"]
         tk_note = f" (crossed {tk['bars_ago']} bars ago)" if tk else ""
         e2e = f" · {ic['e2e']}" if ic["e2e"] else ""
-        L.append(f"- Ichimoku {k} ({ic['preset']}): **{ic['verdict']}** · cloud {f(ic['cloud_bottom'])}-{f(ic['cloud_top'])} · "
+        L.append(f"- Ichimoku {k} ({ic['preset']}): **{ic['verdict']}** · cloud {price(ic['cloud_bottom'])}-{price(ic['cloud_top'])} · "
                  f"future cloud {ic['future_cloud']} · TK {'bullish' if ic['tk_bullish'] else 'bearish'}{tk_note}{e2e}")
-    L.append(f"- Structure: {a['structure']['label']}. 180-day swing {f(a['fib']['swing']['swing_low'])} "
-             f"({a['fib']['swing']['swing_low_date']}) to {f(a['fib']['swing']['swing_high'])} ({a['fib']['swing']['swing_high_date']}).")
-    L.append(f"- Bollinger: %B {r1(d['pct_b'] * 100 if d.get('pct_b') is not None else None)}, width at the "
-             f"percentile {r1(d.get('bb_width_rank'))} of 120 days{' (squeeze)' if d.get('squeeze') else ''}. "
-             f"Relative volume {r1(a['volume']['rel_volume'])}x.")
+    L.append(f"- Structure: {a['structure']['label']}. 180-day swing {price(a['fib']['swing']['swing_low'])} "
+             f"({a['fib']['swing']['swing_low_date']}) to {price(a['fib']['swing']['swing_high'])} ({a['fib']['swing']['swing_high_date']}).")
+    L.append(f"- Bollinger: %B {num(d['pct_b'] * 100 if d.get('pct_b') is not None else None, 1)}, width at the "
+             f"percentile {num(d.get('bb_width_rank'), 1)} of 120 days{' (squeeze)' if d.get('squeeze') else ''}. "
+             f"Relative volume {num(a['volume']['rel_volume'], 1)}x.")
     vw = a["vwaps"]
-    L.append("- VWAPs: " + ", ".join(f"{k} {f(v)} ({pc(a['live'] / v - 1)})" for k, v in vw.items() if v))
+    L.append("- VWAPs: " + ", ".join(f"{k} {price(v)} ({pct(a['live'] / v - 1)})" for k, v in vw.items() if v))
     vp = a["volume_profile"]
     if vp:
-        L.append("- Volume profile: " + ", ".join(f"{k} POC {f(v['poc'])} (value area {f(v['val'])}-{f(v['vah'])})" for k, v in vp.items()))
+        L.append("- Volume profile: " + ", ".join(f"{k} POC {price(v['poc'])} (value area {price(v['val'])}-{price(v['vah'])})" for k, v in vp.items()))
     if a.get("derivatives") and "error" not in a["derivatives"]:
         try:
             import derivatives as D
@@ -1057,19 +1038,19 @@ def render(a):
     opens = [(s, o) for s in a["backtest"] for o in s["open"] if s["grade"] in ("proven", "positive, unproven")]
     if opens:
         L.append("\nStill inside their holding window: " + "; ".join(
-            f"{s['label']} ({o['date']}, {pc(o['return_so_far'])} so far, {s['grade']})" for s, o in opens[-6:]))
+            f"{s['label']} ({o['date']}, {pct(o['return_so_far'])} so far, {s['grade']})" for s, o in opens[-6:]))
     L.append("\n### Conditional setups (research, not instructions)")
     for p in a["setups"]["plans"]:
-        t2 = f" then {f(p['target_2'])}" if p.get("target_2") else ""
+        t2 = f" then {price(p['target_2'])}" if p.get("target_2") else ""
         rr = f" · reward/risk {p['reward_risk']:.1f}" if p.get("reward_risk") else ""
-        L.append(f"- **{p['name']}:** {p['condition']}. Reference {f(p['entry'])}, invalidation {f(p['invalidation'])}, "
-                 f"target {f(p['target_1'])}{t2}{rr}.")
+        L.append(f"- **{p['name']}:** {p['condition']}. Reference {price(p['entry'])}, invalidation {price(p['invalidation'])}, "
+                 f"target {price(p['target_1'])}{t2}{rr}.")
     se = a["seasonality"]
     cur = next(x for x in se["table"] if x["month"] == se["current_month"])
     nxt = next(x for x in se["table"] if x["month"] == se["next_month"])
-    L.append(f"\nSeasonality: {se['current_month']} month to date {pc(se['mtd'])}; {se['current_month']} has been up "
-             f"{rate(cur['positive'])} of {cur['n']} years (median {pc(cur['median'])}). "
-             f"{se['next_month']}: up {rate(nxt['positive'])} of {nxt['n']} years, median {pc(nxt['median'])}.")
+    L.append(f"\nSeasonality: {se['current_month']} month to date {pct(se['mtd'])}; {se['current_month']} has been up "
+             f"{rate(cur['positive'])} of {cur['n']} years (median {pct(cur['median'])}). "
+             f"{se['next_month']}: up {rate(nxt['positive'])} of {nxt['n']} years, median {pct(nxt['median'])}.")
     return "\n".join(L)
 
 
@@ -1086,8 +1067,8 @@ def scan_row(a):
             "macd_d": (d.get("macd") or {}).get("above_signal"), "macd_w": (w.get("macd") or {}).get("above_signal"),
             "vs_200d": ma.get("200D SMA", {}).get("price_vs"), "vs_21w_ema": ma.get("21W EMA", {}).get("price_vs"),
             "stance": a["score"]["stance"], "trend": a["score"]["trend"], "momentum": a["score"]["momentum"],
-            "support": f"{f(sup[0]['low'])}-{f(sup[0]['high'])}" if sup else None,
-            "resistance": f"{f(res[0]['low'])}-{f(res[0]['high'])}" if res else None,
+            "support": f"{price(sup[0]['low'])}-{price(sup[0]['high'])}" if sup else None,
+            "resistance": f"{price(res[0]['low'])}-{price(res[0]['high'])}" if res else None,
             "signals": [f"{s['label']} [{s['grade']}]" for s in good], "flags": a["score"]["flags"]}
 
 
@@ -1096,9 +1077,9 @@ def render_scan(rows):
          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         md = lambda b: "n/a" if b is None else ("up" if b else "down")  # noqa: E731
-        L.append(f"| {r['symbol']} | {f(r['live'])} | {pc(r['1d'])} | {pc(r['7d'])} | {pc(r['30d'])} | {pc(r['vs_yearly_open'])} "
-                 f"| {r1(r['rsi_d'])}/{r1(r['rsi_w'])} | {md(r['macd_d'])}/{md(r['macd_w'])} | {pc(r['vs_200d'])} "
-                 f"| {pc(r['vs_21w_ema'])} | {r['stance']} ({r['trend']:+d}/{r['momentum']:+d}) | {r['support'] or 'n/a'} "
+        L.append(f"| {r['symbol']} | {price(r['live'])} | {pct(r['1d'])} | {pct(r['7d'])} | {pct(r['30d'])} | {pct(r['vs_yearly_open'])} "
+                 f"| {num(r['rsi_d'], 1)}/{num(r['rsi_w'], 1)} | {md(r['macd_d'])}/{md(r['macd_w'])} | {pct(r['vs_200d'])} "
+                 f"| {pct(r['vs_21w_ema'])} | {r['stance']} ({r['trend']:+d}/{r['momentum']:+d}) | {r['support'] or 'n/a'} "
                  f"| {r['resistance'] or 'n/a'} | {'; '.join(r['signals']) or '-'} |")
     return "\n".join(L)
 
@@ -1140,15 +1121,15 @@ def main():
             print(json.dumps(g, indent=2))
             return
         pl = g["power_law"]
-        print(f"## BTC cycle gauges ({src}, live {f(live)})\n")
+        print(f"## BTC cycle gauges ({src}, live {price(live)})\n")
         print("| Gauge | Reading | How to read it |\n|---|---|---|")
         print(f"| Mayer multiple (price / 200D SMA) | {g['mayer_multiple']:.2f} (percentile {g['mayer_percentile']:.0f} of history) | under 0.8 deep value; over 2.4 historically overheated |")
         print(f"| Pi cycle (111D SMA / 2x 350D SMA) | {g['pi_cycle_ratio']:.2f} | 1.0 or above has marked cycle tops |")
-        print(f"| Price / 2-year MA | {g['price_vs_2y_ma']:.2f} (2Y MA {f(g['two_year_ma'])}, x5 {f(g['two_year_ma_x5'])}) | under 1 is the accumulation zone; x5 has marked tops |")
-        print(f"| Price / 200-week SMA | {g['price_vs_200w']:.2f} (200W {f(g['200w_sma'])}) | near 1 has marked bear-market floors |")
-        print(f"| Drawdown from ATH | {pc(g['drawdown_from_ath'])} (ATH {f(g['ath'])} on {g['ath_date']}) | |")
+        print(f"| Price / 2-year MA | {g['price_vs_2y_ma']:.2f} (2Y MA {price(g['two_year_ma'])}, x5 {price(g['two_year_ma_x5'])}) | under 1 is the accumulation zone; x5 has marked tops |")
+        print(f"| Price / 200-week SMA | {g['price_vs_200w']:.2f} (200W {price(g['200w_sma'])}) | near 1 has marked bear-market floors |")
+        print(f"| Drawdown from ATH | {pct(g['drawdown_from_ath'])} (ATH {price(g['ath'])} on {g['ath_date']}) | |")
         print(f"| Days since the April 2024 halving | {g['days_since_halving']} | past cycle tops came ~520-550 days after a halving |")
-        print(f"| Power-law fair value | {f(pl['fair_value'])} (z {pl['z']:+.2f}; -1sd {f(pl['band_minus_1sd'])}, +1sd {f(pl['band_plus_1sd'])}, +2sd {f(pl['band_plus_2sd'])}) | fitted to {src} daily closes since {pl['fit_from']}; a rainbow-chart-style band, not a forecast |")
+        print(f"| Power-law fair value | {price(pl['fair_value'])} (z {pl['z']:+.2f}; -1sd {price(pl['band_minus_1sd'])}, +1sd {price(pl['band_plus_1sd'])}, +2sd {price(pl['band_plus_2sd'])}) | fitted to {src} daily closes since {pl['fit_from']}; a rainbow-chart-style band, not a forecast |")
         return
 
     bench = None
@@ -1182,11 +1163,11 @@ def main():
             print(render_scan([scan_row(a) for a in results]))
         elif args.cmd == "levels":
             for a in results:
-                print(f"## {a['symbol']} levels (live {f(a['live'])})\n")
+                print(f"## {a['symbol']} levels (live {price(a['live'])})\n")
                 print("| Side | Zone | Distance | Strength | What's there |\n|---|---|---|---|---|")
                 for z in sorted(a["zones"], key=lambda z: -z["mid"]):
                     if z["weight"] >= 2.5:
-                        print(f"| {z['side']} | {f(z['low'])}-{f(z['high'])} | {pc(z['distance'])} | {z['weight']:.1f} | {'; '.join(z['levels'][:8])} |")
+                        print(f"| {z['side']} | {price(z['low'])}-{price(z['high'])} | {pct(z['distance'])} | {z['weight']:.1f} | {'; '.join(z['levels'][:8])} |")
                 print()
         elif args.cmd == "backtest":
             for a in results:
@@ -1204,8 +1185,8 @@ def main():
                 print("| Month | Years | Up | Median | Mean |\n|---|---|---|---|---|")
                 for x in r["table"]:
                     print(f"| {x['month']} | {x['n']} | {rate(x['positive'])} "
-                          f"| {pc(x['median'])} | {pc(x['mean'])} |")
-                print(f"\n{r['current_month']} to date: {pc(r['mtd'])}.\n")
+                          f"| {pct(x['median'])} | {pct(x['mean'])} |")
+                print(f"\n{r['current_month']} to date: {pct(r['mtd'])}.\n")
         else:
             for a in results:
                 print(render(a))

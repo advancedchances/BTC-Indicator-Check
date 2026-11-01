@@ -43,6 +43,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
+from formatting import pct  # noqa: E402
 from ta_core import median  # noqa: E402
 from valuation_calc import parse_num  # noqa: E402
 
@@ -121,10 +122,6 @@ def score(rows, benchmark, by="group"):
                         "best": best["ticker"],
                         "worst": min(members, key=lambda m: m["return"])["ticker"]})
     return b_ret, summary
-
-
-def pct(x):
-    return f"{x * 100:+.1f}%"
 
 
 def to_markdown(rows, summary, benchmark, b_ret):

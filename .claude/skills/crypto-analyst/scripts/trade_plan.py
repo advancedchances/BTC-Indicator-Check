@@ -51,6 +51,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
+from formatting import pct, price, rate  # noqa: E402
 import technicals as TA  # noqa: E402
 from market_data import FetchError  # noqa: E402
 
@@ -199,7 +200,7 @@ def _evidence(a, backdrop, btc_ctx, cycle):
             sv += sign * 0.5
         else:
             continue
-        sw.append(f"{s['label']} ({s['grade']}, {TA.rate(pr['win_rate'])} of {pr['n']}, median {TA.pc(pr['median'])})")
+        sw.append(f"{s['label']} ({s['grade']}, {rate(pr['win_rate'])} of {pr['n']}, median {pct(pr['median'])})")
     ev.append(("signal record", max(-2, min(2, sv)), "; ".join(sw) or "no signal firing now has a positive record on this coin"))
     der = a.get("derivatives") or {}
     votes = der.get("votes") or []
@@ -212,7 +213,7 @@ def _evidence(a, backdrop, btc_ctx, cycle):
     if btc_ctx and a["symbol"] != bench_name:
         rel = (a["change"]["30d"] or 0) - (btc_ctx["30d"] or 0)
         v = 0.5 if rel > 0.10 else -0.5 if rel < -0.10 else 0
-        txt = f"30-day return {TA.pc(a['change']['30d'])} vs {bench_name} {TA.pc(btc_ctx['30d'])}"
+        txt = f"30-day return {pct(a['change']['30d'])} vs {bench_name} {pct(btc_ctx['30d'])}"
         if btc_ctx["stance"].startswith(("Strong downtrend", "Downtrend")):
             v -= 0.5
             txt += f"; {bench_name} itself: {btc_ctx['stance'].lower()}"
@@ -224,7 +225,7 @@ def _evidence(a, backdrop, btc_ctx, cycle):
     v = 0
     if cur["n"] >= 6 and cur["positive"] is not None:
         v = 0.25 if cur["positive"] >= 0.7 else -0.25 if cur["positive"] <= 0.3 else 0
-    ev.append(("seasonality", v, f"{se['current_month']} up {TA.rate(cur['positive'])} of {cur['n']} years, median {TA.pc(cur['median'])}"))
+    ev.append(("seasonality", v, f"{se['current_month']} up {rate(cur['positive'])} of {cur['n']} years, median {pct(cur['median'])}"))
     if backdrop:
         g = backdrop["risk_gate"]
         ev.append(("backdrop", 0.5 if g["score"] >= 2 else -0.5 if g["score"] <= -2 else 0, f"{g['label']}: {'; '.join(g['why'])}"))
@@ -498,8 +499,8 @@ def render_portfolio(pc_):
            f"bets, not {pc_['coins']}."]
     if pc_.get("nominal_risk"):
         a = pc_["account"]
-        nom = f"{f(pc_['nominal_risk'])} ({pc(pc_['nominal_risk'] / a).lstrip('+')} of the account)"
-        comb = f"{f(pc_['combined_risk'])} ({pc(pc_['combined_risk'] / a).lstrip('+')})"
+        nom = f"{price(pc_['nominal_risk'])} ({pct(pc_['nominal_risk'] / a).lstrip('+')} of the account)"
+        comb = f"{price(pc_['combined_risk'])} ({pct(pc_['combined_risk'] / a).lstrip('+')})"
         if pc_.get("mixed_sides"):
             L.append(f"The plans point both ways, so they partly offset: correlation-weighted they carry the risk of one "
                      f"position risking about {comb}, against {nom} if each stop were hit on its own. A long-short mix "
@@ -512,9 +513,6 @@ def render_portfolio(pc_):
 
 
 # ---------------------------------------------------------------- rendering
-
-f, pc = TA.f, TA.pc
-
 
 def zone_text(z, n=4):
     return "; ".join(z["levels"][:n]) + (" …" if len(z["levels"]) > n else "")
@@ -558,22 +556,22 @@ def render_side(p, live, title):
     L += ["", "| Step | Price | From live | Reward/risk | Why this level |", "|---|---|---|---|---|"]
     e1 = p["entry_1"]
     share = "50%" if p["entry_2"] else "100%"
-    L.append(f"| Entry 1 ({share}) | {f(e1['low'])}-{f(e1['high'])} | {pc(e1['mid'] / live - 1)} | | {zone_text(e1)} (strength {e1['weight']:.1f}) |")
+    L.append(f"| Entry 1 ({share}) | {price(e1['low'])}-{price(e1['high'])} | {pct(e1['mid'] / live - 1)} | | {zone_text(e1)} (strength {e1['weight']:.1f}) |")
     if p["entry_2"]:
         e2 = p["entry_2"]
-        L.append(f"| Entry 2 (50%) | {f(e2['low'])}-{f(e2['high'])} | {pc(e2['mid'] / live - 1)} | | {zone_text(e2)} (strength {e2['weight']:.1f}) |")
+        L.append(f"| Entry 2 (50%) | {price(e2['low'])}-{price(e2['high'])} | {pct(e2['mid'] / live - 1)} | | {zone_text(e2)} (strength {e2['weight']:.1f}) |")
     moved = f"; moved past {p['stop_moved_for']}" if p["stop_moved_for"] else ""
-    L.append(f"| Stop | {f(p['stop'])} | {pc(p['stop'] / live - 1)} | risk {pc(p['risk_pct']).lstrip('+')} from avg entry {f(p['avg_entry'])} "
+    L.append(f"| Stop | {price(p['stop'])} | {pct(p['stop'] / live - 1)} | risk {pct(p['risk_pct']).lstrip('+')} from avg entry {price(p['avg_entry'])} "
              f"| beyond the {'deeper ' if p['entry_2'] else ''}entry zone plus 0.5 ATR{moved} |")
     for i, t in enumerate(p["targets"], 1):
-        L.append(f"| Exit {i} | {f(t['price'])} | {pc(t['price'] / live - 1)} | {t['rr']:.1f} | "
+        L.append(f"| Exit {i} | {price(t['price'])} | {pct(t['price'] / live - 1)} | {t['rr']:.1f} | "
                  f"just {'below' if p['side'] == 'long' else 'above'} {zone_text(t['zone'], 3)} |")
     b = p.get("breakout")
     if b:
         L.append(f"\nAlternative entry, {'breakout' if p['side'] == 'long' else 'breakdown'}: a daily close "
-                 f"{'above' if p['side'] == 'long' else 'below'} {f(b['trigger'])} with volume at least 1.5x the 20-day average "
-                 f"(and a weekly close {'above' if p['side'] == 'long' else 'below'} it for confirmation). Stop {f(b['stop'])}, "
-                 f"first target {f(b['target'])}" + (f", reward/risk {b['rr']:.1f}" if b.get("rr") else "") +
+                 f"{'above' if p['side'] == 'long' else 'below'} {price(b['trigger'])} with volume at least 1.5x the 20-day average "
+                 f"(and a weekly close {'above' if p['side'] == 'long' else 'below'} it for confirmation). Stop {price(b['stop'])}, "
+                 f"first target {price(b['target'])}" + (f", reward/risk {b['rr']:.1f}" if b.get("rr") else "") +
                  ". A close back inside the zone means it failed: cut it rather than wait for the stop.")
     tl = p.get("thesis_line")
     trail = ("the weekly kijun or a weekly close " + ("below" if p["side"] == "long" else "above") + " the 21-week EMA"
@@ -582,7 +580,7 @@ def render_side(p, live, title):
     L.append(f"\nExit rules: take a third at each exit; after exit 1, move the stop to the average entry; "
              f"trail the rest under {trail}. "
              f"Time stop: if exit 1 hasn't hit within {2 * p['expected_hold_days']} days, the move isn't coming; close it."
-             + (f" The bigger idea is wrong on a weekly close {'below' if p['side'] == 'long' else 'above'} {f(tl['low'] if p['side'] == 'long' else tl['high'])} ({zone_text(tl, 2)})." if tl else ""))
+             + (f" The bigger idea is wrong on a weekly close {'below' if p['side'] == 'long' else 'above'} {price(tl['low'] if p['side'] == 'long' else tl['high'])} ({zone_text(tl, 2)})." if tl else ""))
     if p["counter_trend"]:
         L.append("\nCounter-trend: wait for a trigger in the zone (daily MACD crossing up, RSI back above 30, or a reclaimed "
                  "level) and use smaller size." if p["side"] == "long" else
@@ -599,9 +597,9 @@ def render_sizing(s):
         asked.append(f"a {s['vol_target']:g}% volatility target")
     if s["max_position"]:
         asked.append(f"a {s['max_position']:g}% position cap")
-    L = [f"Size on {f(acct)} ({', '.join(asked)}): {s['units']:,.4g} units, {f(s['notional'])} notional "
-         f"({pc(s['pct_of_account']).lstrip('+')} of the account; above 100% means leverage). The stop risks "
-         f"{f(s['risk_usd'])} ({pc(s['risk_usd'] / acct).lstrip('+')} of the account)"
+    L = [f"Size on {price(acct)} ({', '.join(asked)}): {s['units']:,.4g} units, {price(s['notional'])} notional "
+         f"({pct(s['pct_of_account']).lstrip('+')} of the account; above 100% means leverage). The stop risks "
+         f"{price(s['risk_usd'])} ({pct(s['risk_usd'] / acct).lstrip('+')} of the account)"
          + (f"; the {s['bound_by']} is the binding limit." if len(s["limits"]) > 1 else ".")]
     if s["vol_target"] and s["realized_vol"]:
         L.append(f"30-day volatility is {s['realized_vol'] * 100:.0f}% a year, so a {s['vol_target']:g}% target allows at most "
@@ -633,8 +631,8 @@ def journal_row(o):
         return ", ".join(x.rsplit(" ", 1)[0] for x in z["levels"][:n])
 
     rat = names(p["entry_1"], 3) + (f"; add at {names(p['entry_2'], 2)}" if p["entry_2"] else "")
-    return {"Ticker": o["symbol"], "Side": p["side"], "Entry / Cost Basis": f(p["avg_entry"]),
-            "Exit": f(tgt["price"]), "Stop Loss": f(p["stop"]), "SL %": f"{sl_pct * 100:.2f}%",
+    return {"Ticker": o["symbol"], "Side": p["side"], "Entry / Cost Basis": price(p["avg_entry"]),
+            "Exit": price(tgt["price"]), "Stop Loss": price(p["stop"]), "SL %": f"{sl_pct * 100:.2f}%",
             "R:R": round(tgt["rr"], 2), "Rationale": rat, "Type": p["type"],
             "Setup Confidence": p["grade"], "Expected Hold Time": p["expected_hold"]}
 
@@ -643,8 +641,8 @@ def render(o, brief=False, full=False):
     hz = "position (weeks to months; weekly ATR, monthly and longer levels)" if o["horizon"] == "position" else \
         "swing (days to weeks; daily ATR, weekly and longer levels plus positioning)"
     L = [f"# {o['symbol']} — entry and exit plan, {o['horizon']} horizon",
-         f"*{o['as_of']} · live {f(o['live'])} · {'weekly' if o['horizon'] == 'position' else 'daily'} ATR {f(o['atr'])} "
-         f"({pc(o['atr'] / o['live']).lstrip('+')}) · candles {o['source']} · {hz}*\n",
+         f"*{o['as_of']} · live {price(o['live'])} · {'weekly' if o['horizon'] == 'position' else 'daily'} ATR {price(o['atr'])} "
+         f"({pct(o['atr'] / o['live']).lstrip('+')}) · candles {o['source']} · {hz}*\n",
          f"## {o['bias']} ({o['bias_score']:+.1f}) · leading with the {o['primary']} plan\n"]
     p = o["plans"].get(o["primary"])
     if p:
@@ -673,7 +671,7 @@ def render(o, brief=False, full=False):
     L.append("| Side | Zone | From live | Strength | What's there |\n|---|---|---|---|---|")
     zs = [z for z in o["zones"] if z["weight"] >= ZONE_MIN and abs(z["distance"]) <= 0.20]
     for z in sorted(zs, key=lambda z: -z["mid"]):
-        L.append(f"| {z['side']} | {f(z['low'])}-{f(z['high'])} | {pc(z['distance'])} | {z['weight']:.1f} | {zone_text(z, 6)} |")
+        L.append(f"| {z['side']} | {price(z['low'])}-{price(z['high'])} | {pct(z['distance'])} | {z['weight']:.1f} | {zone_text(z, 6)} |")
     if a.get("signals_now"):
         L.append(f"\n### Signals firing now, with their record on {o['symbol']}")
         L += TA.render_signal_rows(a["signals_now"])
@@ -733,10 +731,10 @@ def to_pine(o, side=None):
                 f'color = color.new({color}, 75), textcolor = chart.fg_color, size = size.small))')
 
     for name, z in zones:
-        L.append(lab(z["mid"], f"{name} {TA.f(z['low'])}-{TA.f(z['high'])} (strength {z['weight']:.1f})", "entryColor"))
-    L.append(lab(p["stop"], f"Stop {TA.f(p['stop'])}", "stopColor"))
+        L.append(lab(z["mid"], f"{name} {price(z['low'])}-{price(z['high'])} (strength {z['weight']:.1f})", "entryColor"))
+    L.append(lab(p["stop"], f"Stop {price(p['stop'])}", "stopColor"))
     for i, t in enumerate(p["targets"], 1):
-        L.append(lab(t["price"], f"Exit {i} {TA.f(t['price'])} ({t['rr']:.1f}R)", "exitColor"))
+        L.append(lab(t["price"], f"Exit {i} {price(t['price'])} ({t['rr']:.1f}R)", "exitColor"))
     for lv in liq:
         L.append(lab(lv["price"], lv["label"].replace('"', "'"), "liqColor"))
     L.append("")
@@ -744,22 +742,22 @@ def to_pine(o, side=None):
     edge = "high" if long else "low"
     into = f'{"low" if long else "high"} {"<=" if long else ">="} {_pine_num(e1[edge])}'
     before = f'{"low" if long else "high"}[1] {">" if long else "<"} {_pine_num(e1[edge])}'
-    L.append(f'alertcondition({into} and {before}, "{sym} entry 1", "{sym} traded into entry zone 1 ({TA.f(e1["low"])}-{TA.f(e1["high"])})")')
+    L.append(f'alertcondition({into} and {before}, "{sym} entry 1", "{sym} traded into entry zone 1 ({price(e1["low"])}-{price(e1["high"])})")')
     if p["entry_2"]:
         e2 = p["entry_2"]
         L.append(f'alertcondition({("low" if long else "high")} {"<=" if long else ">="} {_pine_num(e2[edge])} and '
                  f'{("low" if long else "high")}[1] {">" if long else "<"} {_pine_num(e2[edge])}, "{sym} entry 2", '
-                 f'"{sym} traded into entry zone 2 ({TA.f(e2["low"])}-{TA.f(e2["high"])})")')
+                 f'"{sym} traded into entry zone 2 ({price(e2["low"])}-{price(e2["high"])})")')
     cross_stop = "ta.crossunder" if long else "ta.crossover"
-    L.append(f'alertcondition({cross_stop}(close, {_pine_num(p["stop"])}), "{sym} stop", "{sym} closed beyond the stop {TA.f(p["stop"])}")')
+    L.append(f'alertcondition({cross_stop}(close, {_pine_num(p["stop"])}), "{sym} stop", "{sym} closed beyond the stop {price(p["stop"])}")')
     cross_t = "ta.crossover" if long else "ta.crossunder"
     reach = "high" if long else "low"
     for i, t in enumerate(p["targets"], 1):
         L.append(f'alertcondition({cross_t}({reach}, {_pine_num(t["price"])}), "{sym} exit {i}", '
-                 f'"{sym} reached exit {i} at {TA.f(t["price"])}")')
+                 f'"{sym} reached exit {i} at {price(t["price"])}")')
     if b:
         L.append(f'alertcondition({cross_t}(close, {_pine_num(b["trigger"])}), "{sym} {"breakout" if long else "breakdown"}", '
-                 f'"{sym} closed {"above" if long else "below"} {TA.f(b["trigger"])}: check volume (1.5x the 20-day average) before acting")')
+                 f'"{sym} closed {"above" if long else "below"} {price(b["trigger"])}: check volume (1.5x the 20-day average) before acting")')
     return "\n".join(L) + "\n"
 
 

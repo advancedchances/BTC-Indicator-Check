@@ -35,6 +35,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
+from formatting import price  # noqa: E402
 import ta_core as T  # noqa: E402
 import technicals as TA  # noqa: E402
 import trade_plan as P  # noqa: E402
@@ -240,19 +241,19 @@ def export(sym, out, near=0.01):
         for name, z in (("entry 1", p["entry_1"]), ("entry 2", p["entry_2"])):
             if z and z["low"] * (1 - near) <= live <= z["high"] * (1 + near):
                 inside = z["low"] <= live <= z["high"]
-                alerts.append(f"{o['horizon']} {name}: price {TA.f(live)} is {'inside' if inside else 'within ' + format(near, '.0%') + ' of'} "
-                              f"{TA.f(z['low'])}-{TA.f(z['high'])} ({labels(z, 3)}); grade {p['grade']}, stop {TA.f(p['stop'])}")
+                alerts.append(f"{o['horizon']} {name}: price {price(live)} is {'inside' if inside else 'within ' + format(near, '.0%') + ' of'} "
+                              f"{price(z['low'])}-{price(z['high'])} ({labels(z, 3)}); grade {p['grade']}, stop {price(p['stop'])}")
         if prev_close >= p["stop"] > last_close:
-            alerts.append(f"{o['horizon']} stop: the daily close {TA.f(last_close)} fell below the stop {TA.f(p['stop'])}")
+            alerts.append(f"{o['horizon']} stop: the daily close {price(last_close)} fell below the stop {price(p['stop'])}")
         b = p.get("breakout")
         if b and prev_close <= b["trigger"] < last_close:
-            alerts.append(f"{o['horizon']} breakout: the daily close {TA.f(last_close)} cleared {TA.f(b['trigger'])}; "
+            alerts.append(f"{o['horizon']} breakout: the daily close {price(last_close)} cleared {price(b['trigger'])}; "
                           "check volume (1.5x the 20-day average)")
     wc = a["_series"]["wc"]
     e21 = T.ema(wc["c"], 21)
     if len(wc["c"]) > 2 and e21[-1] and e21[-2] and wc["c"][-2] >= e21[-2] and wc["c"][-1] < e21[-1] \
             and time.time() - (wc["t"][-1] + 7 * 86400) < 2 * 86400:
-        alerts.append(f"weekly close {TA.f(wc['c'][-1])} fell below the 21-week EMA {TA.f(e21[-1])}: "
+        alerts.append(f"weekly close {price(wc['c'][-1])} fell below the 21-week EMA {price(e21[-1])}: "
                       + record(by_label["Weekly close below the 21-week EMA"]))
     seen, uniq = set(), []
     for x in alerts:  # both horizons can share a zone
