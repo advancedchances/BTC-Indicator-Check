@@ -34,13 +34,13 @@ little. Profit factor = gross gains / gross losses.
 import argparse
 import csv
 import json
-import math
 import os
 import re
 import sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
+from formatting import num, pct, rate  # noqa: E402
 from ta_core import max_drawdown, median, wilson_lower  # noqa: E402
 
 COLUMNS = {
@@ -281,18 +281,6 @@ def report(trades, min_n, breaker=None, cooldown=14):
                                      [t["pnl"] + t["risk"] for t in losers if t["r"] < -1.25]),
                                  "note": "losses worse than 1.25R: the stop wasn't honoured, or it gapped"}
     return out
-
-
-def pct(x, nd=1):
-    return "n/a" if x is None else f"{x * 100:+.{nd}f}%"
-
-
-def rate(x):
-    return "n/a" if x is None else f"{x * 100:.0f}%"
-
-
-def num(x, nd=2):
-    return "n/a" if x is None or (isinstance(x, float) and math.isnan(x)) else f"{x:.{nd}f}"
 
 
 def table(title, groups):

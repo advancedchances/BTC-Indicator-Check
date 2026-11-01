@@ -73,6 +73,7 @@ import time
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
+from formatting import num, pct, rate, signed  # noqa: E402
 import ta_core as T  # noqa: E402
 import technicals as TA  # noqa: E402
 import trade_plan as P  # noqa: E402
@@ -410,29 +411,15 @@ def load_csv(path):
 
 # ---------------------------------------------------------------- rendering
 
-def fmt(x, kind="r"):
-    if x is None:
-        return "n/a"
-    return f"{x * 100:.0f}%" if kind == "pct" else f"{x:+.2f}"
-
-
 def table(title, summ, keys):
     L = [f"### {title}", "| " + " | ".join(k.replace("_", " ").capitalize() for k in keys)
          + " | Plans | Filled | Win rate | Separate trades | Win floor | Avg R | Avg R gross | Avg R floor | R per plan | Total R |",
          "|" + "---|" * (len(keys) + 10)]
     for s in summ:
-        L.append("| " + " | ".join(str(s[k]) for k in keys) + f" | {s['plans']} | {fmt(s['fill_rate'], 'pct')} "
-                 f"| {fmt(s['win_rate'], 'pct')} | {s['separate']} | {fmt(s['win_floor'], 'pct')} | {fmt(s['avg_r'])} "
-                 f"| {fmt(s['avg_r_gross'])} | {fmt(s['avg_r_floor'])} | {fmt(s['r_per_plan'])} | {s['total_r']:+.1f} |")
+        L.append("| " + " | ".join(str(s[k]) for k in keys) + f" | {s['plans']} | {rate(s['fill_rate'])} "
+                 f"| {rate(s['win_rate'])} | {s['separate']} | {rate(s['win_floor'])} | {signed(s['avg_r'])} "
+                 f"| {signed(s['avg_r_gross'])} | {signed(s['avg_r_floor'])} | {signed(s['r_per_plan'])} | {s['total_r']:+.1f} |")
     return L
-
-
-def pct(x):
-    return "n/a" if x is None else f"{x * 100:+.1f}%"
-
-
-def num(x):
-    return "n/a" if x is None else f"{x:.2f}"
 
 
 def bot_rows(bots, part=None):
@@ -445,8 +432,8 @@ def bot_rows(bots, part=None):
         s, h = (b[part]["stats"], b[part]["bench"]) if part else (b["stats"], b["bench"])
         if not s or not h:
             continue
-        lead = f"| {name} | " + ("" if part else f"{b['trades']} | {fmt(b['win_rate'], 'pct')} | {fmt(b['avg_r'])} "
-                                 f"| {fmt(b['in_market'], 'pct')} | ")
+        lead = f"| {name} | " + ("" if part else f"{b['trades']} | {rate(b['win_rate'])} | {signed(b['avg_r'])} "
+                                 f"| {rate(b['in_market'])} | ")
         L.append(lead + f"{pct(s['cagr'])} | {num(s['sharpe'])} | {pct(s['max_dd'])} | {pct(h['cagr'])} | {num(h['sharpe'])} "
                  f"| {pct(h['max_dd'])} |")
     return L
@@ -493,8 +480,8 @@ def render(rows, symbols, step, costs_bps, bots=None, risk=None, holdout=None):
                                                         GRADE_ORDER.get(k.split("|")[3], 9))):
             if a[k]["fills"] < 20 or b[k]["fills"] < 10:
                 continue
-            L.append(f"| {k.replace('|', ', ')} | {a[k]['fills']} | {fmt(a[k]['win_rate'], 'pct')} | {fmt(a[k]['avg_r'])} "
-                     f"| {b[k]['fills']} | {fmt(b[k]['win_rate'], 'pct')} | {fmt(b[k]['avg_r'])} | {fmt(b[k]['avg_r_floor'])} |")
+            L.append(f"| {k.replace('|', ', ')} | {a[k]['fills']} | {rate(a[k]['win_rate'])} | {signed(a[k]['avg_r'])} "
+                     f"| {b[k]['fills']} | {rate(b[k]['win_rate'])} | {signed(b[k]['avg_r'])} | {signed(b[k]['avg_r_floor'])} |")
         L.append("\nThe plan's design saw all of this history, so the later period checks how stable the record is, "
                  "not whether the design generalizes. Only plans logged from now on test that.")
     return "\n".join(L)

@@ -43,6 +43,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
+from formatting import pct, price  # noqa: E402
 import ta_core as T  # noqa: E402
 from market_data import ALIASES, HL_INFO, FetchError, fetch, load_candles  # noqa: E402
 
@@ -92,20 +93,12 @@ def okx_inst(sym):
     return f"{ALIASES.get(sym, {}).get('okx', sym)}-USDT-SWAP"
 
 
-def pct(x, nd=1):
-    return "n/a" if x is None else f"{x * 100:+.{nd}f}%"
-
-
 def usd(x):
     if x is None:
         return "n/a"
     a = abs(x)
     s = f"${a / 1e9:.2f}B" if a >= 1e9 else f"${a / 1e6:.1f}M" if a >= 1e6 else f"${a / 1e3:.0f}k"
     return ("-" if x < 0 else "") + s
-
-
-def px(x):
-    return "n/a" if x is None else (f"{x:,.0f}" if abs(x) >= 1000 else f"{x:,.6g}")
 
 
 # ---------------------------------------------------------------- funding and open interest
@@ -796,19 +789,19 @@ def render_snapshot(s):
     if isinstance(w, dict) and "error" not in w:
         ls = f"{w['long_short']:.2f}" if w["long_short"] is not None else "n/a (no shorts)"
         L.append(f"- Whales ({w['universe']}): {w['accounts']} accounts hold {usd(w['long_usd'])} long and "
-                 f"{usd(w['short_usd'])} short (L/S {ls}); average entry long {px(w['avg_entry_long'])}, "
-                 f"short {px(w['avg_entry_short'])}; unrealized PnL longs {usd(w['upnl_long'])}, shorts {usd(w['upnl_short'])}.")
+                 f"{usd(w['short_usd'])} short (L/S {ls}); average entry long {price(w['avg_entry_long'])}, "
+                 f"short {price(w['avg_entry_short'])}; unrealized PnL longs {usd(w['upnl_long'])}, shorts {usd(w['upnl_short'])}.")
         near = [q for q in w["liquidations_within_30pct"] if abs(q["distance"]) <= 0.15]
         if near:
             near.sort(key=lambda q: -q["notional"])
             L.append("  Largest whale liquidation prices within 15%: " + ", ".join(
-                f"{q['side']} {px(q['price'])} ({usd(q['notional'])}, {pct(q['distance'])})" for q in near[:5]))
+                f"{q['side']} {price(q['price'])} ({usd(q['notional'])}, {pct(q['distance'])})" for q in near[:5]))
     lm = s.get("liquidation_map")
     if isinstance(lm, dict) and "error" not in lm:
         L.append(f"- Liquidation map ({lm['model']}): **{lm['read']['label']}**.")
         L.append("  Longs would be liquidated near " + ", ".join(
-            f"{px(c['price'])} ({usd(c['notional'])})" for c in lm["top_long_clusters"][:4]) +
-            "; shorts near " + ", ".join(f"{px(c['price'])} ({usd(c['notional'])})" for c in lm["top_short_clusters"][:4]) + ".")
+            f"{price(c['price'])} ({usd(c['notional'])})" for c in lm["top_long_clusters"][:4]) +
+            "; shorts near " + ", ".join(f"{price(c['price'])} ({usd(c['notional'])})" for c in lm["top_short_clusters"][:4]) + ".")
         cu = lm["cumulative"]
         L.append("  Cumulative: " + "; ".join(f"within {k}: {usd(v['long_liqs_below'])} longs below, "
                                               f"{usd(v['short_liqs_above'])} shorts above" for k, v in cu.items() if k in ("5%", "10%")))
@@ -818,10 +811,10 @@ def render_snapshot(s):
     o = s.get("options")
     if isinstance(o, dict) and "error" not in o:
         sk = o.get("skew_25d") or {}
-        mp = "; ".join(f"{m['expiry']} max pain {px(m['max_pain'])} (P/C {m['put_call_oi']:.2f})" for m in o["max_pain"])
+        mp = "; ".join(f"{m['expiry']} max pain {price(m['max_pain'])} (P/C {m['put_call_oi']:.2f})" for m in o["max_pain"])
         L.append(f"- Options (Deribit): put/call OI {o['put_call_oi']:.2f}; {mp}; call walls "
-                 + ", ".join(px(c["strike"]) for c in o["call_walls"]) + "; put walls "
-                 + ", ".join(px(p["strike"]) for p in o["put_walls"])
+                 + ", ".join(price(c["strike"]) for c in o["call_walls"]) + "; put walls "
+                 + ", ".join(price(p["strike"]) for p in o["put_walls"])
                  + (f"; 25-delta skew {sk['skew']:+.1f} vol pts ({sk['expiry']}), ATM IV {sk['atm_iv']:.0f}" if sk else "")
                  + f"; DVOL {o['dvol']:.1f} (percentile {o['dvol_percentile_1y']:.0f} of the past year)"
                  + ("; basis " + ", ".join(f"{b['expiry']} {b['annualized'] * 100:+.1f}%" for b in o["basis"][:3]) if o["basis"] else "")
@@ -832,8 +825,8 @@ def render_snapshot(s):
     b = s.get("book")
     if isinstance(b, dict) and "error" not in b:
         L.append(f"- Order book ({b['venue']}): {usd(b['bid_usd_within_2pct'])} bids vs {usd(b['ask_usd_within_2pct'])} asks within 2%; "
-                 f"largest bid wall {', '.join(px(x['price']) + ' ' + usd(x['usd']) for x in b['bid_walls'][:2])}; "
-                 f"largest ask wall {', '.join(px(x['price']) + ' ' + usd(x['usd']) for x in b['ask_walls'][:2])}.")
+                 f"largest bid wall {', '.join(price(x['price']) + ' ' + usd(x['usd']) for x in b['bid_walls'][:2])}; "
+                 f"largest ask wall {', '.join(price(x['price']) + ' ' + usd(x['usd']) for x in b['ask_walls'][:2])}.")
     return L
 
 
@@ -918,7 +911,7 @@ def main():
             print(json.dumps(out, indent=2, default=str))
         else:
             out.setdefault("as_of", T.utc(time.time()).strftime("%Y-%m-%d %H:%M UTC"))
-            print(f"## {sym} (live {px(live)})")
+            print(f"## {sym} (live {price(live)})")
             print("\n".join(render_snapshot(out)))
             print()
 

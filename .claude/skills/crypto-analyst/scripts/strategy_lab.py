@@ -67,6 +67,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
+from formatting import num, pct, rate  # noqa: E402
 import ta_core as T  # noqa: E402
 from market_data import FetchError, forming, load_candles  # noqa: E402
 
@@ -421,14 +422,6 @@ def grid_summary(pname, trials, ref_out, start):
 
 # ---------------------------------------------------------------- rendering
 
-def pc(x, signed=True):
-    return "n/a" if x is None else (f"{x * 100:+.1f}%" if signed else f"{x * 100:.0f}%")
-
-
-def nm(x, nd=2):
-    return "n/a" if x is None else f"{x:.{nd}f}"
-
-
 def params_text(p):
     return ", ".join(f"{v}" if not isinstance(v, tuple) else "/".join(map(str, v)) for v in p.values())
 
@@ -443,9 +436,9 @@ def render(title, res, cfg):
          f"| Strategy | CAGR | Volatility | Sharpe | Beats {bench} | Sortino | Max DD | Calmar | In market | Turnover/yr | Entries |",
          "|---|---|---|---|---|---|---|---|---|---|---|"]
     for k, s in res["strategies"].items():
-        L.append(f"| {s['label']} | {pc(s['cagr'])} | {pc(s['vol'], False)} | {nm(s['sharpe'])} | "
-                 f"{'(benchmark)' if s['beats'] is None else pc(s['beats'], False)} "
-                 f"| {nm(s['sortino'])} | {pc(s['max_dd'])} | {nm(s['calmar'])} | {pc(s['in_market'], False)} "
+        L.append(f"| {s['label']} | {pct(s['cagr'])} | {rate(s['vol'])} | {num(s['sharpe'])} | "
+                 f"{'(benchmark)' if s['beats'] is None else rate(s['beats'])} "
+                 f"| {num(s['sortino'])} | {pct(s['max_dd'])} | {num(s['calmar'])} | {rate(s['in_market'])} "
                  f"| {s['turnover']:.1f}x | {s['entries']} |")
     if cfg.get("split_ts"):
         d = cfg["split"]
@@ -456,25 +449,25 @@ def render(title, res, cfg):
             b, a = s["split"]["before"], s["split"]["after"]
             if not b or not a:
                 continue
-            L.append(f"| {s['label']} | {nm(b['sharpe'])} | {nm(a['sharpe'])} | {pc(b['cagr'])} | {pc(a['cagr'])} "
-                     f"| {pc(b['max_dd'])} | {pc(a['max_dd'])} |")
+            L.append(f"| {s['label']} | {num(b['sharpe'])} | {num(a['sharpe'])} | {pct(b['cagr'])} | {pct(a['cagr'])} "
+                     f"| {pct(b['max_dd'])} | {pct(a['max_dd'])} |")
     keys = list(res["strategies"])
     years = sorted({y for s in res["strategies"].values() for y in s["by_year"]})
     L += ["", "By calendar year (first and last years are partial):", "",
           "| Year | " + " | ".join(keys) + " |", "|---|" + "---|" * len(keys)]
     for y in years:
-        L.append(f"| {y} | " + " | ".join(pc(res["strategies"][k]["by_year"].get(y)) for k in keys) + " |")
+        L.append(f"| {y} | " + " | ".join(pct(res["strategies"][k]["by_year"].get(y)) for k in keys) + " |")
     for key, g in res["grids"].items():
         if not g:
             continue
-        L += ["", f"Grid for {key} ({g['param']}): best Sharpe {nm(g['best_sharpe'])} at {params_text(g['best'])}, "
-              f"median {nm(g['median_sharpe'])}, worst {nm(g['worst_sharpe'])}; {g['settings_beating']} of "
+        L += ["", f"Grid for {key} ({g['param']}): best Sharpe {num(g['best_sharpe'])} at {params_text(g['best'])}, "
+              f"median {num(g['median_sharpe'])}, worst {num(g['worst_sharpe'])}; {g['settings_beating']} of "
               f"{len(g['trials'])} settings beat {bench} more often than not. Chance the best setting really beats "
-              f"{bench}, allowing for {len(g['trials'])} tries: {pc(g['best_beats_adjusted'], False)}.", "",
+              f"{bench}, allowing for {len(g['trials'])} tries: {rate(g['best_beats_adjusted'])}.", "",
               f"| {g['param']} | Sharpe | CAGR | Max DD | Beats {bench} |", "|---|---|---|---|---|"]
         for tr in g["trials"]:
-            L.append(f"| {params_text(tr['params'])} | {nm(tr['sharpe'])} | {pc(tr['cagr'])} | {pc(tr['max_dd'])} "
-                     f"| {pc(tr['beats'], False)} |")
+            L.append(f"| {params_text(tr['params'])} | {num(tr['sharpe'])} | {pct(tr['cagr'])} | {pct(tr['max_dd'])} "
+                     f"| {rate(tr['beats'])} |")
     return "\n".join(L)
 
 
@@ -489,7 +482,7 @@ def render_summary(results):
         cells = []
         for k in keys:
             s = r["strategies"].get(k)
-            cells.append(f"{nm(s['sharpe'])} ({pc(s['max_dd'])})" if s else "")
+            cells.append(f"{num(s['sharpe'])} ({pct(s['max_dd'])})" if s else "")
         L.append(f"| {sym} | " + " | ".join(cells) + " |")
     return "\n".join(L)
 
