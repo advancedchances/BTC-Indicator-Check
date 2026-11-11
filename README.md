@@ -150,6 +150,7 @@ Every plan prints its **tested record**: how plans of the same kind (horizon, si
 ```bash
 python .claude/skills/crypto-analyst/scripts/strategy_lab.py BTC ETH SOL --split 2023-01-01   # each rule on each coin, before/after 2023
 python .claude/skills/crypto-analyst/scripts/strategy_lab.py BTC --grid                       # parameter grids: plateau or spike?
+python .claude/skills/crypto-analyst/scripts/strategy_lab.py BTC ETH --strategies hold,stage2,mastack,mastackvol   # Weinstein Stage 2 and the moving-average stack
 python .claude/skills/crypto-analyst/scripts/strategy_lab.py --basket BTC ETH SOL XRP DOGE ADA LTC LINK BCH   # rotation and basket rules
 ```
 
