@@ -10,6 +10,7 @@ Usage:
   python derivatives.py options BTC              # Deribit put/call, max pain, OI walls, 25-delta skew, DVOL, basis
   python derivatives.py book BTC                 # order-book walls within 5%
   python derivatives.py premium BTC              # Coinbase premium vs Binance (US spot demand)
+  python derivatives.py binance BTC              # Binance spot vs perp taker flow, open interest, long/short ratios, basis
   python derivatives.py sentiment                # Fear & Greed, MVRV Z-score, BTC dominance, stablecoins, DXY, S&P 500, 10Y
   python derivatives.py snapshot SOL             # all of the above for one coin
   add --json for machine-readable output
@@ -20,7 +21,9 @@ liquidation orders), Bitget, Gate, dYdX, Deribit (options, DVOL, futures
 basis), Coinbase (order book), alternative.me, CoinMetrics community,
 CoinGecko, DefiLlama and Yahoo Finance. Binance futures and Bybit
 refuse some regions; their funding still arrives through Hyperliquid's
-predicted-funding feed.
+predicted-funding feed, and Binance's taker flow, open interest and
+long/short ratios come from its public data archive (data.binance.vision),
+which is complete up to yesterday (UTC).
 
 The liquidation map is a model, not exchange data: it replays the last 30
 days of OKX open interest hour by hour, assumes every new contract opened a
@@ -36,16 +39,20 @@ profitable Hyperliquid accounts' open positions.
 import argparse
 import concurrent.futures as cf
 import datetime as dt
+import io
 import json
 import math
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
+import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # also works under python -I
 from formatting import pct, price  # noqa: E402
 import ta_core as T  # noqa: E402
-from market_data import ALIASES, HL_INFO, FetchError, fetch, load_candles  # noqa: E402
+from market_data import ALIASES, HL_INFO, TIMEOUT, USER_AGENT, FetchError, fetch, load_candles  # noqa: E402
 
 CACHE_DIR = os.environ.get("CRYPTO_ANALYST_CACHE") or os.path.join(os.path.expanduser("~"), ".cache", "crypto-analyst")
 LEVERAGE_TIERS = ((5, 0.15), (10, 0.30), (25, 0.30), (50, 0.15), (100, 0.10))
@@ -55,6 +62,9 @@ WHALE_COUNT = 100
 BASELINE_APR = 0.1095  # 0.01% per 8h: the default rate many venues charge when the market is balanced
 CROWDED_APR = 0.25      # annualized funding above this: longs are paying well over the baseline
 SQUEEZE_APR = -0.05     # below this: shorts are paying
+BINANCE_ARCHIVE = "https://data.binance.vision/data"
+FLOW_DAYS = 90          # history the Binance flow percentiles are ranked against
+FLOW_WINDOW = 7         # days of taker flow summed for the read
 
 
 # ---------------------------------------------------------------- helpers
@@ -287,6 +297,157 @@ def oi_quadrant(price_chg, oi_chg):
     if up_p and not up_oi:
         return {"label": "short covering (price up, OI down): rally lacks new buyers", "vote": -0.25}
     return {"label": "long flush (price and OI down): leverage cleared, often near short-term lows", "vote": 0.5}
+
+
+# ---------------------------------------------------------------- Binance spot vs perp flow (public archive)
+
+def _archive_rows(path):
+    """One CSV from Binance's public archive as rows of strings; None when the file isn't published (yet)."""
+    def get():
+        req = urllib.request.Request(f"{BINANCE_ARCHIVE}/{path}", headers={"User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                z = zipfile.ZipFile(io.BytesIO(r.read()))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            raise FetchError("site error", f"HTTP {e.code} from the Binance archive")
+        except (urllib.error.URLError, TimeoutError, zipfile.BadZipFile) as e:
+            raise FetchError("unreachable", str(e))
+        lines = z.read(z.namelist()[0]).decode().splitlines()
+        return [ln.split(",") for ln in lines if ln and not ln[0].isalpha()]  # older files have no header row
+
+    path_key = "binance_" + path.replace("/", "_") + ".json"
+    try:
+        with open(os.path.join(CACHE_DIR, path_key)) as fh:  # published files never change
+            return json.load(fh)
+    except (OSError, ValueError):
+        pass
+    rows = get()
+    if rows:
+        try:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            with open(os.path.join(CACHE_DIR, path_key), "w") as fh:
+                json.dump(rows, fh)
+        except OSError:
+            pass
+    return rows
+
+
+def _flow_day(pair, day):
+    spot = _archive_rows(f"spot/daily/klines/{pair}/1d/{pair}-1d-{day}.zip")
+    perp = _archive_rows(f"futures/um/daily/klines/{pair}/1d/{pair}-1d-{day}.zip")
+    met = _archive_rows(f"futures/um/daily/metrics/{pair}/{pair}-metrics-{day}.zip")
+    if not (spot and perp and met):
+        return None
+    s, p, m = spot[-1], perp[-1], met[-1]
+    oi = float(m[2] or 0)
+    if oi <= 0:
+        return None
+    return {"date": day, "close": float(p[4]), "spot_vol": float(s[5]), "spot_buy": float(s[9]),
+            "perp_vol": float(p[5]), "perp_buy": float(p[9]), "oi": oi,
+            "top_ls": float(m[5] or 0) or None, "acct_ls": float(m[6] or 0) or None}
+
+
+def flow_read(rows, window=FLOW_WINDOW):
+    """Read daily Binance rows (oldest first): who is hitting the bid and the offer on spot versus perps.
+
+    Net taker flow is taker buys minus taker sells in coins. Imbalance is that over volume. The divergence is
+    spot imbalance minus perp imbalance, ranked against every `window`-day stretch in the sample.
+    """
+    if len(rows) < window * 3:
+        raise ValueError("not enough Binance history")
+
+    def net(r, k):
+        return 2 * r[k + "_buy"] - r[k + "_vol"]
+
+    def stretch(i):
+        w = rows[i - window + 1:i + 1]
+        sn, pn = sum(net(r, "spot") for r in w), sum(net(r, "perp") for r in w)
+        sv, pv = sum(r["spot_vol"] for r in w), sum(r["perp_vol"] for r in w)
+        return sn, pn, (sn / sv if sv else 0), (pn / pv if pv else 0)
+
+    i = len(rows) - 1
+    sn, pn, si, pi = stretch(i)
+    divs = [stretch(j)[2] - stretch(j)[3] for j in range(window - 1, len(rows))]
+    cur, back = rows[-1], rows[-1 - window]
+    out = {"as_of": cur["date"], "days": len(rows), "window_days": window,
+           "spot_net": sn, "perp_net": pn, "spot_imbalance": si, "perp_imbalance": pi,
+           "divergence_percentile": T.percentile_rank(divs[:-1], divs[-1]),
+           "spot_net_usd": sn * cur["close"], "perp_net_usd": pn * cur["close"],
+           "oi": cur["oi"], "oi_usd": cur["oi"] * cur["close"], "oi_change": cur["oi"] / back["oi"] - 1,
+           "oi_percentile": T.percentile_rank([r["oi"] for r in rows[:-1]], cur["oi"]),
+           "price_change": cur["close"] / back["close"] - 1,
+           "spot_buy_days": sum(1 for r in rows[-window:] if net(r, "spot") > 0),
+           "perp_sell_days": sum(1 for r in rows[-window:] if net(r, "perp") < 0)}
+    for k in ("acct_ls", "top_ls"):
+        hist = [r[k] for r in rows[:-1] if r.get(k)]
+        if cur.get(k) and hist:
+            out[k] = {"now": cur[k], "percentile": T.percentile_rank(hist, cur[k])}
+    dp = out["divergence_percentile"]
+    if sn > 0 and pn < 0 and dp >= 80:
+        label = "spot bought while perps sold"
+        if out["oi_change"] > 0.02 and out["price_change"] < 0:
+            label += ", with open interest rising as price falls: shorts or hedges being added against spot buying"
+    elif sn < 0 and pn > 0 and dp <= 20:
+        label = "perps bought while spot sold: the bid is leverage, not spot"
+    elif sn < 0 and pn < 0:
+        label = "takers selling on both spot and perps"
+    elif sn > 0 and pn > 0:
+        label = "takers buying on both spot and perps"
+    elif sn > 0 and pn < 0:
+        label = "spot bought and perps sold, but by no more than usual (perp takers net sell most weeks)"
+    else:
+        label = "perps bought and spot sold, but by no more than usual"
+    a = out.get("acct_ls")
+    if a and a["percentile"] >= 90:
+        label += f"; accounts the most net long of the last {len(rows)} days"
+    elif a and a["percentile"] <= 10:
+        label += f"; accounts the least net long of the last {len(rows)} days"
+    # Context only. Tested 2022-2026 on BTC, ETH and SOL: none of these reads beat an average week on all three.
+    out["read"] = {"label": label, "vote": 0}
+    return out
+
+
+def binance_flow(sym, days=FLOW_DAYS, basis_days=7):
+    pair = ALIASES.get(sym, {}).get("binance", sym) + "USDT"
+    today = T.utc(time.time()).date()
+    dates = [(today - dt.timedelta(days=i)).isoformat() for i in range(days + 1, 0, -1)]
+    with cf.ThreadPoolExecutor(16) as ex:
+        rows = [r for r in ex.map(lambda d: _flow_day(pair, d), dates) if r]
+    if not rows:
+        raise FetchError("no data", f"the Binance archive has no spot and perp files for {pair}")
+    out = flow_read(rows)
+    out["pair"] = pair
+    prem = []
+    for d in dates[-basis_days - 1:]:
+        for r in _archive_rows(f"futures/um/daily/premiumIndexKlines/{pair}/1h/{pair}-1h-{d}.zip") or []:
+            prem.append(float(r[4]))
+    if prem:
+        out["premium"] = sum(prem) / len(prem)  # perp mark vs index: negative means the perp trades under spot
+    out["recent"] = [{"date": r["date"], "close": r["close"], "spot_net": 2 * r["spot_buy"] - r["spot_vol"],
+                      "perp_net": 2 * r["perp_buy"] - r["perp_vol"], "oi": r["oi"], "acct_ls": r["acct_ls"],
+                      "top_ls": r["top_ls"]} for r in rows[-FLOW_WINDOW:]]
+    return out
+
+
+def render_flow(b, sym):
+    w = b["window_days"]
+    L = [f"- Binance flow ({b['pair']}, {w} days to {b['as_of']}, from its public archive): **{b['read']['label']}**.",
+         f"  Spot takers net {format(b['spot_net'], '+,.0f')} {sym} "
+         f"({usd(b['spot_net_usd'])}, net buying on {b['spot_buy_days']} of {w} days); perp takers net "
+         f"{format(b['perp_net'], '+,.0f')} {sym} ({usd(b['perp_net_usd'])}, net selling on {b['perp_sell_days']} of {w} days); "
+         f"spot-minus-perp imbalance at percentile {b['divergence_percentile']:.0f} of {b['days']} days."]
+    tail = [f"open interest {usd(b['oi_usd'])} ({pct(b['oi_change'])} in {w} days, percentile {b['oi_percentile']:.0f}) "
+            f"with price {pct(b['price_change'])}"]
+    if b.get("acct_ls"):
+        tail.append(f"accounts long/short {b['acct_ls']['now']:.2f} (percentile {b['acct_ls']['percentile']:.0f})")
+    if b.get("top_ls"):
+        tail.append(f"top traders' positions long/short {b['top_ls']['now']:.2f} (percentile {b['top_ls']['percentile']:.0f})")
+    if b.get("premium") is not None:
+        tail.append(f"perp vs index {b['premium'] * 1e4:+.1f} bp")
+    L.append("  " + "; ".join(tail)[0].upper() + "; ".join(tail)[1:] + ".")
+    return L
 
 
 # ---------------------------------------------------------------- Hyperliquid whales
@@ -686,6 +847,7 @@ def snapshot(sym, live, hourly=None, include_options=True):
     out["book"] = safe(book_walls, sym, live)
     if sym in ("BTC", "ETH", "SOL"):
         out["premium"] = safe(coinbase_premium, sym)
+    out["binance_flow"] = safe(binance_flow, sym)
     out["levels"] = levels_from(out, live)
     out["votes"] = votes_from(out)
     return out
@@ -822,6 +984,9 @@ def render_snapshot(s):
     cp = s.get("premium")
     if isinstance(cp, dict) and "error" not in cp:
         L.append(f"- Coinbase premium: {cp['premium'] * 100:+.3f}% ({'+' if cp['premium_usd'] >= 0 else '-'}${abs(cp['premium_usd']):,.2f}) vs Binance: {cp['read']}.")
+    bf = s.get("binance_flow")
+    if isinstance(bf, dict) and "error" not in bf:
+        L += render_flow(bf, s.get("symbol", ""))
     b = s.get("book")
     if isinstance(b, dict) and "error" not in b:
         L.append(f"- Order book ({b['venue']}): {usd(b['bid_usd_within_2pct'])} bids vs {usd(b['ask_usd_within_2pct'])} asks within 2%; "
@@ -861,7 +1026,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--json", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("funding", "positioning", "liqmap", "options", "book", "premium", "snapshot"):
+    for name in ("funding", "positioning", "liqmap", "options", "book", "premium", "binance", "snapshot"):
         sp = sub.add_parser(name)
         sp.add_argument("symbols", nargs="+")
     sub.add_parser("sentiment")
@@ -904,6 +1069,8 @@ def main():
             out = {"symbol": sym, "book": book_walls(sym, live)}
         elif args.cmd == "premium":
             out = {"symbol": sym, "premium": coinbase_premium(sym)}
+        elif args.cmd == "binance":
+            out = {"symbol": sym, "binance_flow": binance_flow(sym)}
         else:
             out = snapshot(sym, live)
             out.get("funding", {}).get("hl_history", {}).pop("aprs", None)
