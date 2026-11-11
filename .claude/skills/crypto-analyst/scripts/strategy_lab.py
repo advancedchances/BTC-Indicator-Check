@@ -29,6 +29,12 @@ Single-coin strategies (long or flat; the position is set on the daily close and
   voltrend  tsmom scaled so the position targets 40% annualized volatility, never above 100% invested.
             Volatility clusters, so cutting size when it rises improves risk-adjusted returns
             (Moreira and Muir 2017). Trades only when the target moves 10% or more (a drift band)
+  stage2    Weinstein Stage 2: long while the last weekly close is above a 30-week SMA that is itself
+            rising (higher than 4 weeks ago), flat otherwise
+  mastack   moving-average stack: invested by the share of four votes that are up. The votes are the
+            close above the 20-day SMA (the Bollinger basis), the close above the 200-day SMA, Weinstein
+            Stage 2, and the weekly close above the 200-week SMA. A vote without enough history is left out
+  mastackvol  mastack scaled to 40% annualized volatility
 Basket strategies (--basket; weekly rebalance on the last close of the week)
   basket       equal-weight buy and hold of the coins, rebalanced weekly: the benchmark
   xsmom        cross-sectional momentum: the 3 coins with the best 28-day return, each only while that
@@ -140,17 +146,81 @@ def sig_voltrend(s, target=0.40, lookbacks=TSMOM_LOOKBACKS, periods=365, **_):
     return [b * min(1.0, target / v) if v else 0.0 for b, v in zip(base, vol)]
 
 
+def weekly_closes_asof(s):
+    """For each daily bar, the closes of every week completed by that bar's close (shared list, plus its length then)."""
+    ends = week_ends(s["t"])
+    last = len(s["t"]) - 1
+    closes, upto = [], []
+    for i, c in enumerate(s["c"]):
+        # the final bar only counts as a week's close if the calendar says so (Sunday for crypto, Friday for stocks)
+        if ends[i] and (i < last or T.utc(s["t"][i]).weekday() in (4, 6)):
+            closes.append(c)
+        upto.append(len(closes))
+    return closes, upto
+
+
+def ma_legs(s, stage_n=30, slope_weeks=4, **_):
+    """The four moving-average votes per daily bar, each True, False or None (not enough history yet).
+
+    basis   close above the 20-day SMA, the Bollinger basis: the short-term trend
+    d200    close above the 200-day SMA: the regime line
+    stage2  Weinstein Stage 2: the last weekly close above a 30-week SMA that is higher than `slope_weeks` weeks ago
+    w200    the last weekly close above the 200-week SMA: the long-term floor
+    """
+    c = s["c"]
+    m20, m200 = T.sma(c, 20), T.sma(c, 200)
+    wc, upto = weekly_closes_asof(s)
+    w30, w200 = T.sma(wc, stage_n), T.sma(wc, 200)
+    out = []
+    for i, x in enumerate(c):
+        k = upto[i] - 1
+        st = fl = None
+        if k >= 0 and w30[k] is not None and k - slope_weeks >= 0 and w30[k - slope_weeks] is not None:
+            st = wc[k] > w30[k] > w30[k - slope_weeks]
+        if k >= 0 and w200[k] is not None:
+            fl = wc[k] > w200[k]
+        out.append({"basis": None if m20[i] is None else x > m20[i], "d200": None if m200[i] is None else x > m200[i],
+                    "stage2": st, "w200": fl})
+    return out
+
+
+def sig_stage2(s, stage_n=30, slope_weeks=4, **_):
+    return [1.0 if v["stage2"] else 0.0 for v in ma_legs(s, stage_n, slope_weeks)]
+
+
+def sig_mastack(s, legs=("basis", "d200", "stage2", "w200"), stage_n=30, **_):
+    """Invested by the share of moving-average votes that are up, counting only votes with enough history."""
+    out = []
+    for v in ma_legs(s, stage_n):
+        have = [v[k] for k in legs if v[k] is not None]
+        out.append(sum(have) / len(have) if have else 0.0)
+    return out
+
+
+def sig_mastackvol(s, target=0.40, periods=365, **kw):
+    base = sig_mastack(s, **kw)
+    vol = T.rolling_vol(s["c"], 30, periods)
+    return [b * min(1.0, target / v) if v else 0.0 for b, v in zip(base, vol)]
+
+
 SINGLE = {
     "hold": ("Buy and hold", sig_hold, {}),
     "notebook": ("Notebook verdict (RSI/MACD/Bollinger vote)", sig_notebook, {}),
     "sma": ("Long above the 200-day SMA", sig_sma, {"n": 200}),
     "tsmom": ("Trend: share of 28/56/112/224-day returns up", sig_tsmom, {}),
     "voltrend": ("Trend, scaled to 40% volatility", sig_voltrend, {"target": 0.40}),
+    "stage2": ("Weinstein Stage 2: above a rising 30-week SMA", sig_stage2, {"stage_n": 30}),
+    "mastack": ("MA stack: share of 20D/200D/30W/200W votes up", sig_mastack, {}),
+    "mastackvol": ("MA stack, scaled to 40% volatility", sig_mastackvol, {"target": 0.40}),
 }
 SINGLE_GRID = {
     "sma": ("n", [{"n": n} for n in (20, 50, 100, 150, 200, 250, 300)]),
     "tsmom": ("lookback", [{"lookbacks": (L,)} for L in (7, 14, 28, 56, 112, 224, 365)]),
     "voltrend": ("target vol", [{"target": t} for t in (0.2, 0.3, 0.4, 0.6, 0.8)]),
+    "stage2": ("weeks", [{"stage_n": n} for n in (10, 20, 30, 40, 50)]),
+    "mastack": ("legs", [{"legs": g} for g in (("basis", "d200", "stage2", "w200"), ("d200", "stage2", "w200"),
+                                               ("basis", "stage2", "w200"), ("basis", "d200", "w200"),
+                                               ("basis", "d200", "stage2"), ("d200", "stage2"), ("basis", "d200"))]),
 }
 
 

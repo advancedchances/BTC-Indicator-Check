@@ -78,5 +78,31 @@ class Signals(unittest.TestCase):
         self.assertAlmostEqual(sum(w.values()), 1.0)
 
 
+class MovingAverageStack(unittest.TestCase):
+    def test_weekly_closes_only_count_completed_weeks(self):
+        s = series([float(i) for i in range(1, 30)])           # starts on a Sunday (1600000000 floor is 2020-09-13)
+        closes, upto = L.weekly_closes_asof(s)
+        self.assertEqual(closes[0], 1.0)                        # that first Sunday closes a week
+        self.assertEqual(upto[0], 1)
+        self.assertEqual(upto[6], 1)                            # Saturday: still only one completed week
+        self.assertEqual(upto[7], 2)                            # next Sunday
+        self.assertEqual(closes[1], 8.0)
+
+    def test_legs_need_history_then_vote(self):
+        up = series([100.0 + i for i in range(400)])
+        legs = L.ma_legs(up)
+        self.assertIsNone(legs[10]["basis"])
+        self.assertIsNone(legs[150]["d200"])
+        self.assertIsNone(legs[-1]["w200"])                     # 400 days is under 200 weeks
+        self.assertTrue(legs[-1]["basis"] and legs[-1]["d200"] and legs[-1]["stage2"])
+        self.assertEqual(L.sig_mastack(up)[-1], 1.0)            # the missing vote is left out, not counted as down
+        self.assertEqual(L.sig_stage2(up)[-1], 1.0)
+
+    def test_downtrend_is_flat(self):
+        down = series([1000.0 - 2 * i for i in range(400)])
+        self.assertEqual(L.sig_stage2(down)[-1], 0.0)
+        self.assertEqual(L.sig_mastack(down)[-1], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
