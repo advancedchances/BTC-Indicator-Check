@@ -118,6 +118,7 @@ Every level in a plan traces to a reading printed beside it. Two engines supply 
 python .claude/skills/crypto-analyst/scripts/technicals.py analyze BTC      # full technical dossier
 python .claude/skills/crypto-analyst/scripts/technicals.py backtest ETH     # which signals have worked on ETH
 python .claude/skills/crypto-analyst/scripts/derivatives.py liqmap BTC      # liquidation map and whale liquidation prices
+python .claude/skills/crypto-analyst/scripts/derivatives.py binance BTC     # Binance spot vs perp taker flow, open interest, long/short
 python .claude/skills/crypto-analyst/scripts/derivatives.py sentiment       # market backdrop and risk gate
 ```
 

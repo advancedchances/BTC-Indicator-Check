@@ -32,6 +32,7 @@ How to turn a ticker into entry and exit levels the user can check, using `scrip
 | Funding across venues | `python scripts/derivatives.py funding BTC HYPE` |
 | Liquidation map, whale liquidation prices, recent liquidations | `python scripts/derivatives.py liqmap BTC` |
 | Options (put/call, max pain, OI walls, skew, DVOL, basis) | `python scripts/derivatives.py options BTC` |
+| Binance spot vs perp taker flow, open interest, long/short ratios | `python scripts/derivatives.py binance BTC` |
 | Market backdrop (Fear & Greed, MVRV Z, dominance, stablecoins, DXY, S&P 500, 10Y) | `python scripts/derivatives.py sentiment` |
 | Stocks and ETFs | `python scripts/trade_plan.py MSTR IBIT --asset stock` |
 | TradingView indicator with the plan's levels and alerts | `python scripts/trade_plan.py BTC --pine btc.pine` |
@@ -105,6 +106,13 @@ Add `--json` to any of them for machine-readable output. All of them use closed 
   - Call walls above and put walls below, within 45 days. Large open interest at a strike tends to pin price or act as a level.
   - 25-delta skew near 30 days: puts more than 5 vol points over calls is priced fear (contrarian supportive).
   - DVOL percentile and the futures basis.
+- **Binance flow.** From Binance's public archive (data.binance.vision), complete to yesterday UTC; the live futures API is geo-blocked in cloud sessions. Over the last 7 days it nets taker buys against taker sells on spot and on the USDT perp, and ranks the spot-minus-perp gap against the last 90 days. It also gives open interest, the long/short ratio of all accounts and of top traders' positions, and the perp's discount to index.
+  - Perp takers net sell in most weeks, so a negative perp number alone means nothing. Read the percentile.
+  - "Spot bought while perps sold" with open interest rising into a falling price is what a cash-and-carry or hedged-accumulation trade looks like. The data shows flow on the venue, not who placed it: don't attribute it to the exchange itself or to any one actor.
+  - It carries no vote. Tested on daily data from April 2022 to November 2026, counting episodes at least one horizon apart:
+    - BTC, spot bought while perps sold after a down week: up 65% of 17 times over 14 days against a 54% base rate, mean +10.0% against +1.7%. Too few cases to call proven.
+    - The same read on ETH (60% of 15, mean 0.0%) and SOL (38% of 16) showed nothing.
+    - Accounts in the most-long tenth of 180 days: no effect on BTC; ETH was up 35% of 26 times over 30 days against 51%.
 - **Coinbase premium.** Coinbase USD price against Binance USDT, converted at Coinbase's USDT rate. Positive means US spot demand.
 
 ## 5. Signal track records
