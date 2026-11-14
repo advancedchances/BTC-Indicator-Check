@@ -65,6 +65,12 @@ SOURCES = [
     ("CoinMetrics community (MVRV)", "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=btc&metrics=CapMVRVCur&page_size=1&paging_from=end"),
     ("CoinGecko global (dominance)", "https://api.coingecko.com/api/v3/global"),
     ("Yahoo Finance (DXY, S&P 500)", "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?range=5d&interval=1d"),
+    ("CoinGecko derivatives (Binance/Bybit OI)", "https://api.coingecko.com/api/v3/derivatives"),
+    ("HTX linear swap (funding, OI, OI history)", "https://api.hbdm.com/linear-swap-api/v1/swap_open_interest?contract_code=BTC-USDT"),
+    ("KuCoin futures (funding, OI)", "https://api-futures.kucoin.com/api/v1/contracts/XBTUSDTM"),
+    ("Kraken futures (funding, OI)", "https://futures.kraken.com/derivatives/api/v3/tickers"),
+    ("Bitfinex derivatives (funding, OI)", "https://api-pub.bitfinex.com/v2/status/deriv?keys=tBTCF0:USTF0"),
+    ("Gate contract stats (OI history, L/S)", "https://api.gateio.ws/api/v4/futures/usdt/contract_stats?contract=BTC_USDT&limit=1"),
     ("Binance futures (funding, OI)", "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT"),
     ("Bybit (funding, OI)", "https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT"),
 ]
@@ -165,7 +171,11 @@ def parse_time(s):
 
 INTERVALS = {"1h": 3600, "6h": 21600, "1d": 86400}
 # Tickers that differ by venue: {symbol: {venue: ticker}}
-ALIASES = {"LIGHTER": {"hyperliquid": "LIT"}, "LIT": {"coinbase": "LIGHTER"}}
+ALIASES = {
+    "BTC": {"kucoin": "XBT", "kraken_futures": "XBT"},
+    "LIGHTER": {"hyperliquid": "LIT"},
+    "LIT": {"coinbase": "LIGHTER"},
+}
 
 
 def _series(rows):

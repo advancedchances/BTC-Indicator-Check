@@ -16,14 +16,15 @@ Usage:
   add --json for machine-readable output
 
 Sources: Hyperliquid (funding, OI, predicted Binance/Bybit funding, top
-traders' live positions), OKX (OI history, long/short ratios, taker volume,
-liquidation orders), Bitget, Gate, dYdX, Deribit (options, DVOL, futures
-basis), Coinbase (order book), alternative.me, CoinMetrics community,
-CoinGecko, DefiLlama and Yahoo Finance. Binance futures and Bybit
-refuse some regions; their funding still arrives through Hyperliquid's
-predicted-funding feed, and Binance's taker flow, open interest and
-long/short ratios come from its public data archive (data.binance.vision),
-which is complete up to yesterday (UTC).
+traders' live positions), CoinGecko derivatives (Binance/Bybit perp OI),
+OKX (OI history, long/short ratios, taker volume, liquidation orders),
+Bitget, Gate (contracts + stats), HTX, KuCoin, Kraken Futures, Bitfinex,
+dYdX, Deribit (options, DVOL, futures basis), Coinbase (order book),
+alternative.me, CoinMetrics community, CoinGecko, DefiLlama and Yahoo Finance.
+Binance futures and Bybit direct APIs refuse some regions; their predicted
+funding comes from Hyperliquid, their live OI from CoinGecko's derivatives
+feed, and Binance's taker flow, open interest and long/short ratios come from
+its public data archive (data.binance.vision), complete up to yesterday (UTC).
 
 The liquidation map is a model, not exchange data: it replays the last 30
 days of OKX open interest hour by hour, assumes every new contract opened a
@@ -118,6 +119,112 @@ def hl_contexts():
     return {u["name"]: c for u, c in zip(meta["universe"], ctxs)}
 
 
+def _cg_derivatives_map():
+    """Cached map of CoinGecko Binance/Bybit linear perpetuals by market and index."""
+    def build():
+        raw = fetch("https://api.coingecko.com/api/v3/derivatives")
+        keep = {}
+        targets = ("Binance (Futures)", "Bybit (Futures)")
+        for r in raw:
+            mkt = r.get("market")
+            if mkt not in targets or r.get("contract_type") != "perpetual":
+                continue
+            idx = (r.get("index_id") or "").upper()
+            if not idx:
+                continue
+            keep.setdefault(f"{mkt}|{idx}", []).append({
+                "symbol": r.get("symbol") or "",
+                "oi": float(r.get("open_interest") or 0),
+                "funding_rate": r.get("funding_rate"),
+            })
+        return keep
+
+    return cached("cg_derivatives.json", 300, build)
+
+
+def cg_derivatives_oi(sym):
+    """Extract live USD open interest for Binance and Bybit perpetuals from CoinGecko."""
+    sym_u = sym.upper()
+    bn_sym = ALIASES.get(sym_u, {}).get("binance", sym_u)
+    data = _cg_derivatives_map()
+    out = {}
+    stable_suffixes = ("USDT", "USDC", "PERP")
+    for short, mkt in (("Binance", "Binance (Futures)"), ("Bybit", "Bybit (Futures)")):
+        rows = data.get(f"{mkt}|{sym_u}") or data.get(f"{mkt}|{bn_sym}") or []
+        if not rows:
+            continue
+        linear = [
+            r for r in rows
+            if r["symbol"].endswith(stable_suffixes) and "USD_" not in r["symbol"]
+            and (r["symbol"].startswith(sym_u) or r["symbol"].startswith(bn_sym))
+        ]
+        chosen = linear or [max(rows, key=lambda r: r["oi"])]
+        oi_sum = sum(r["oi"] for r in chosen)
+        primary = next((r for r in chosen if r["symbol"].endswith("USDT")), chosen[0])
+        fr = primary.get("funding_rate")
+        rate_8h = float(fr) / 100.0 if fr is not None else None
+        if oi_sum > 0:
+            out[short] = {"oi_usd": oi_sum, "rate_8h": rate_8h}
+    return out
+
+
+def _kraken_futures_tickers():
+    """Cached Kraken Futures public tickers list (refreshed every 60s)."""
+    return cached(
+        "kraken_futures_tickers.json",
+        60,
+        lambda: fetch("https://futures.kraken.com/derivatives/api/v3/tickers").get("tickers", []),
+    )
+
+
+def _fetch_htx_funding(sym):
+    oi = fetch(f"https://api.hbdm.com/linear-swap-api/v1/swap_open_interest?contract_code={sym}-USDT")
+    if not (isinstance(oi, dict) and oi.get("status") == "ok" and oi.get("data")):
+        return None
+    fr = fetch(f"https://api.hbdm.com/linear-swap-api/v1/swap_funding_rate?contract_code={sym}-USDT")
+    if not (isinstance(fr, dict) and fr.get("status") == "ok" and isinstance(fr.get("data"), dict)):
+        return None
+    r8 = float(fr["data"]["funding_rate"])
+    return {"venue": "HTX", "rate_8h": r8, "apr": r8 * 3 * 365, "oi_usd": float(oi["data"][0]["value"]) or None}
+
+
+def _fetch_kucoin_funding(sym):
+    kc_base = ALIASES.get(sym, {}).get("kucoin", sym)
+    kc = fetch(f"https://api-futures.kucoin.com/api/v1/contracts/{kc_base}USDTM")
+    d = kc.get("data") if isinstance(kc, dict) else None
+    if not isinstance(d, dict) or not d.get("markPrice"):
+        return None
+    r8 = float(d.get("fundingFeeRate") or 0)
+    oi_usd = float(d.get("openInterest") or 0) * float(d.get("multiplier") or 0) * float(d.get("markPrice") or 0) or None
+    return {"venue": "KuCoin", "rate_8h": r8, "apr": r8 * 3 * 365, "oi_usd": oi_usd}
+
+
+def _fetch_kraken_funding(sym):
+    kr_base = ALIASES.get(sym, {}).get("kraken_futures", sym)
+    tickers = _kraken_futures_tickers()
+    t = next((x for x in tickers if x.get("symbol") == f"PF_{kr_base}USD"), None) if isinstance(tickers, list) else None
+    if not t or not t.get("markPrice") or t.get("openInterest") is None:
+        return None
+    mark_px = float(t["markPrice"])
+    # Kraken PF_* fundingRate in /tickers is USD per 1 base unit per hour.
+    r8 = (float(t.get("fundingRate") or 0) / mark_px) * 8
+    oi_usd = float(t["openInterest"]) * mark_px or None
+    return {"venue": "Kraken", "rate_8h": r8, "apr": r8 * 3 * 365, "oi_usd": oi_usd}
+
+
+def _fetch_bitfinex_funding(sym):
+    bfx = fetch(f"https://api-pub.bitfinex.com/v2/status/deriv?keys=t{sym}F0:USTF0")
+    if not (isinstance(bfx, list) and bfx and isinstance(bfx[0], list) and len(bfx[0]) > 18):
+        return None
+    row = bfx[0]
+    mark_px = row[15] or row[3]
+    if mark_px is None or row[18] is None:
+        return None
+    r8 = float(row[12] or 0)
+    oi_usd = float(row[18]) * float(mark_px) or None
+    return {"venue": "Bitfinex", "rate_8h": r8, "apr": r8 * 3 * 365, "oi_usd": oi_usd}
+
+
 def funding(sym, hl_ctx=None, predicted=None):
     """Current funding (per 8h and annualized) and open interest by venue."""
     rows = []
@@ -131,6 +238,9 @@ def funding(sym, hl_ctx=None, predicted=None):
         rows.append({"venue": "Hyperliquid", "rate_8h": r * 8, "apr": r * 24 * 365,
                      "oi_usd": float(c["openInterest"]) * mark, "basis_bps": float(c["premium"]) * 1e4,
                      "volume_24h": float(c["dayNtlVlm"])})
+    cg_oi = safe(cg_derivatives_oi, sym)
+    cg_map = cg_oi if isinstance(cg_oi, dict) and "error" not in cg_oi else {}
+    seen_predicted = set()
     predicted = predicted if predicted is not None else safe(fetch, HL_INFO, {"type": "predictedFundings"})
     if isinstance(predicted, list):
         for name, venues in predicted:
@@ -141,8 +251,16 @@ def funding(sym, hl_ctx=None, predicted=None):
                     continue
                 ih = info.get("fundingIntervalHours") or 8
                 r = float(info["fundingRate"])
-                rows.append({"venue": {"BinPerp": "Binance (predicted)", "BybitPerp": "Bybit (predicted)"}.get(venue, venue),
-                             "rate_8h": r * 8 / ih, "apr": r * (24 / ih) * 365, "oi_usd": None})
+                base_name = {"BinPerp": "Binance", "BybitPerp": "Bybit"}.get(venue)
+                oi_usd = cg_map.get(base_name, {}).get("oi_usd") if base_name else None
+                if base_name:
+                    seen_predicted.add(base_name)
+                label = base_name if (base_name and oi_usd) else {"BinPerp": "Binance (predicted)", "BybitPerp": "Bybit (predicted)"}.get(venue, venue)
+                rows.append({"venue": label, "rate_8h": r * 8 / ih, "apr": r * (24 / ih) * 365, "oi_usd": oi_usd})
+    for short in ("Binance", "Bybit"):
+        if short not in seen_predicted and short in cg_map and cg_map[short].get("rate_8h") is not None:
+            r8 = cg_map[short]["rate_8h"]
+            rows.append({"venue": short, "rate_8h": r8, "apr": r8 * 3 * 365, "oi_usd": cg_map[short]["oi_usd"]})
     okx = safe(fetch, f"https://www.okx.com/api/v5/public/funding-rate?instId={okx_inst(sym)}")
     if isinstance(okx, dict) and okx.get("data"):
         d = okx["data"][0]
@@ -164,6 +282,10 @@ def funding(sym, hl_ctx=None, predicted=None):
         rows.append({"venue": "Gate", "rate_8h": r * 8 / ih, "apr": r * (24 / ih) * 365,
                      "oi_usd": float(gt.get("position_size") or 0) * float(gt.get("quanto_multiplier") or 0)
                      * float(gt.get("mark_price") or 0) or None})
+    for fetcher in (_fetch_htx_funding, _fetch_kucoin_funding, _fetch_kraken_funding, _fetch_bitfinex_funding):
+        res = safe(fetcher, sym)
+        if isinstance(res, dict) and "error" not in res:
+            rows.append(res)
     dy = safe(fetch, f"https://indexer.dydx.trade/v4/perpetualMarkets?ticker={sym}-USD")
     if isinstance(dy, dict) and dy.get("markets", {}).get(f"{sym}-USD"):
         d = dy["markets"][f"{sym}-USD"]
@@ -281,6 +403,20 @@ def positioning(sym, prices=None):
         sell = sum(float(r[1]) for r in tv["data"])
         buy = sum(float(r[2]) for r in tv["data"])
         out["okx_taker_buy_share_24h"] = buy / (buy + sell) if buy + sell else None
+    gs = safe(fetch, f"https://api.gateio.ws/api/v4/futures/usdt/contract_stats?contract={sym}_USDT&interval=1h&limit=25")
+    if isinstance(gs, list) and gs:
+        latest, oldest = gs[-1], gs[0] if len(gs) > 1 else None
+        cur_oi = float(latest.get("open_interest_usd") or 0) or None
+        old_oi = float(oldest.get("open_interest_usd") or 0) if oldest else None
+        if cur_oi:
+            out["gate_oi"] = {"usd": cur_oi, "24h": (cur_oi / old_oi - 1) if old_oi else None}
+        for dst, key in (
+            ("gate_accounts_long_short", "lsr_account"),
+            ("gate_top_traders_ls", "top_lsr_size"),
+            ("gate_taker_ls", "lsr_taker"),
+        ):
+            if latest.get(key) is not None:
+                out[dst] = {"now": float(latest[key])}
     return out
 
 
@@ -946,6 +1082,17 @@ def render_snapshot(s):
             bits.append(f"OKX top traders' positions long/short {p['okx_top_traders_position_ratio']['now']:.2f}")
         if p.get("okx_taker_buy_share_24h") is not None:
             bits.append(f"taker buys {p['okx_taker_buy_share_24h'] * 100:.0f}% of 24h perp volume")
+        gate_bits = []
+        if p.get("gate_oi") and p["gate_oi"].get("24h") is not None:
+            gate_bits.append(f"OI 24h {pct(p['gate_oi']['24h'])}")
+        if p.get("gate_accounts_long_short"):
+            gate_bits.append(f"accounts L/S {p['gate_accounts_long_short']['now']:.2f}")
+        if p.get("gate_top_traders_ls"):
+            gate_bits.append(f"top traders L/S {p['gate_top_traders_ls']['now']:.2f}")
+        if p.get("gate_taker_ls"):
+            gate_bits.append(f"taker L/S {p['gate_taker_ls']['now']:.2f}")
+        if gate_bits:
+            bits.append("Gate (" + ", ".join(gate_bits) + ")")
         L.append("\n- Positioning: " + "; ".join(bits))
     w = s.get("whales")
     if isinstance(w, dict) and "error" not in w:
